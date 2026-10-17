@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentParticipantGuard } from '../shipments/guards/shipment-participant.guard';
 import { MilestoneChecklistService } from './milestone-checklist.service';
 import { CreateChecklistItemDto, UpdateChecklistItemDto } from './dto/checklist.dto';
@@ -44,7 +44,7 @@ export class MilestoneChecklistController {
     @Param('shipmentId') shipmentId: string,
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: CreateChecklistItemDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.checklist.create(shipmentId, index, dto, user?.stellarAddress ?? user?.sub, user?.id);
   }
@@ -57,7 +57,7 @@ export class MilestoneChecklistController {
     @Param('index', ParseIntPipe) index: number,
     @Param('itemId') itemId: string,
     @Body() dto: UpdateChecklistItemDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.checklist.update(shipmentId, index, itemId, dto, user?.stellarAddress ?? user?.sub, user?.id);
   }
@@ -68,7 +68,7 @@ export class MilestoneChecklistController {
     @Param('shipmentId') shipmentId: string,
     @Param('index', ParseIntPipe) index: number,
     @Param('itemId') itemId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.checklist.remove(shipmentId, index, itemId, user?.stellarAddress ?? user?.sub, user?.id);
   }

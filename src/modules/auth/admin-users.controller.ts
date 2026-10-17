@@ -13,7 +13,7 @@ import { UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { BlockImpersonation } from '../../common/decorators/block-impersonation.decorator';
 import { ForceLogoutDto } from './dto/force-logout.dto';
@@ -48,7 +48,7 @@ export class AdminUsersController {
   @ApiResponse({ status: 404, description: 'User not found' })
   impersonate(
     @Param('id') id: string,
-    @CurrentUser() admin: any,
+    @CurrentUser() admin: AuthenticatedUser,
     @Req() req: Request,
   ) {
     const ip =
@@ -81,7 +81,7 @@ export class AdminUsersController {
   @ApiResponse({ status: 404, description: 'User not found' })
   forceLogout(
     @Param('id') id: string,
-    @CurrentUser() admin: any,
+    @CurrentUser() admin: AuthenticatedUser,
     @Body() dto: ForceLogoutDto,
     @Req() req: Request,
   ) {

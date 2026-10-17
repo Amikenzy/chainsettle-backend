@@ -502,6 +502,7 @@ npm run sbom
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `DATABASE_REPLICA_URL` | No | Optional read-replica URL for GET-heavy paths |
 | `SHIPMENT_ARCHIVAL_DAYS` | No | Days before terminal shipments move to cold storage (default: 90) |
+| `SHIPMENT_ARCHIVAL_CRON` | No | Cron schedule for the archival job; invalid expressions fail at startup (default: `0 3 * * *`) |
 | `JWT_SECRET` | Yes | Secret for signing JWTs |
 | `JWT_EXPIRES_IN` | No | Token expiry (default: `7d`) |
 | `IMPERSONATION_JWT_EXPIRES_IN` | No | Admin impersonation token TTL (default: `15m`) |

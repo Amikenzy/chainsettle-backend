@@ -4,7 +4,7 @@ import { ShipmentGql, MilestoneGql, ChainEventGql } from './shipment.type';
 import { ShipmentsService } from '../shipments/shipments.service';
 import { EventsService } from '../events/events.service';
 import { GqlJwtAuthGuard } from './gql-jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { GqlLoaders } from './graphql.loaders';
 import { assertParticipant } from './graphql.access';
 import { toMilestoneGql } from './milestone.mapper';
@@ -20,7 +20,7 @@ export class ShipmentResolver {
   @Query(() => ShipmentGql, { description: 'Fetch a shipment with its milestones and recent events' })
   async shipment(
     @Args('id', { type: () => ID }) id: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ShipmentGql> {
     const s = await this.shipmentsService.findOne(id, user?.id);
     assertParticipant(s as any, user);
@@ -29,7 +29,7 @@ export class ShipmentResolver {
 
   @Query(() => [ShipmentGql], { description: 'List shipments visible to the authenticated user' })
   async shipments(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Args('status', { nullable: true }) status?: string,
     @Args('page', { nullable: true, type: () => Number }) page?: number,
     @Args('limit', { nullable: true, type: () => Number }) limit?: number,

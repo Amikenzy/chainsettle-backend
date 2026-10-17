@@ -37,7 +37,7 @@ import { BulkConfirmMilestonesDto } from './dto/bulk-confirm-milestones.dto';
 import { BulkRejectMilestonesDto } from './dto/bulk-reject-milestones.dto';
 import { RebalanceMilestonesDto } from './dto/rebalance-milestones.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentParticipantGuard } from '../shipments/guards/shipment-participant.guard';
 import { StellarAddressThrottlerGuard } from '../../common/guards/stellar-address-throttler.guard';
 import { Throttle } from '@nestjs/throttler';
@@ -134,7 +134,7 @@ export class MilestonesController {
   appendMilestone(
     @Param('shipmentId') shipmentId: string,
     @Body() dto: AppendMilestoneDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     const callerAddress: string = user?.stellarAddress ?? user?.sub;
     return this.milestonesService.appendMilestone(shipmentId, callerAddress, dto);
@@ -254,7 +254,7 @@ export class MilestonesController {
     @Param('shipmentId') shipmentId: string,
     @Param('index', ParseIntPipe) index: number,
     @UploadedFile() file: Express.Multer.File,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     if (!file) {
       throw new BadRequestException('A proof file must be provided in the "file" field');
@@ -325,7 +325,7 @@ export class MilestonesController {
   rebalance(
     @Param('shipmentId') shipmentId: string,
     @Body() dto: RebalanceMilestonesDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     const callerAddress: string = user?.stellarAddress ?? user?.sub;
     return this.milestonesService.rebalance(shipmentId, callerAddress, dto.milestones);
@@ -347,7 +347,7 @@ export class MilestonesController {
     @Param('shipmentId') shipmentId: string,
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: ConfirmMilestoneDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     const callerAddress: string = user?.stellarAddress ?? user?.sub;
     return this.milestonesService.confirmFromApi(
@@ -376,7 +376,7 @@ export class MilestonesController {
   bulkReject(
     @Param('shipmentId') shipmentId: string,
     @Body() dto: BulkRejectMilestonesDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     const callerAddress: string = user?.stellarAddress ?? user?.sub;
     return this.milestonesService.bulkRejectFromApi(shipmentId, callerAddress, dto.indices, dto.reason);
@@ -401,7 +401,7 @@ export class MilestonesController {
   removeMilestone(
     @Param('shipmentId') shipmentId: string,
     @Param('index', ParseIntPipe) index: number,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     const callerAddress: string = user?.stellarAddress ?? user?.sub;
     const callerId: string | undefined = user?.id;
@@ -439,7 +439,7 @@ export class MilestonesController {
     @Param('shipmentId') shipmentId: string,
     @Param('index', ParseIntPipe) index: number,
     @Param('evidenceId') evidenceId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     const callerAddress: string = user?.stellarAddress ?? user?.sub;
     const isAdmin: boolean = user?.role === 'ADMIN';

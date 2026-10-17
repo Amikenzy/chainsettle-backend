@@ -6,7 +6,7 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { StellarAddressThrottlerGuard } from '../../common/guards/stellar-address-throttler.guard';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -46,7 +46,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Invalidate the current JWT session' })
   @ApiResponse({ status: 200, description: 'Logged out successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  logout(@CurrentUser() user: any) {
+  logout(@CurrentUser() user: AuthenticatedUser) {
     if (!user?.jti || !user?.exp) {
       // Token was issued before session tracking was added — nothing to invalidate
       return { message: 'Logged out successfully' };
@@ -70,7 +70,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Verification email resent' })
   @ApiResponse({ status: 400, description: 'No pending email to verify' })
   @ApiResponse({ status: 429, description: 'Too many requests - rate limit exceeded' })
-  async resendVerification(@CurrentUser() user: any) {
+  async resendVerification(@CurrentUser() user: AuthenticatedUser) {
     if (!user?.id) {
       throw new BadRequestException('User not found');
     }

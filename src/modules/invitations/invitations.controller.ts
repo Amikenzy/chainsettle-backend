@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CreateInvitationDto } from './dto/create-invitation.dto';
 import { InvitationsService } from './invitations.service';
 
@@ -15,7 +15,7 @@ export class InvitationsController {
   @Post()
   @ApiOperation({ summary: 'Invite a counterparty by email (20 per user per day)' })
   @ApiResponse({ status: 429, description: 'Daily invitation limit reached' })
-  create(@Body() dto: CreateInvitationDto, @CurrentUser() user: any) {
+  create(@Body() dto: CreateInvitationDto, @CurrentUser() user: AuthenticatedUser) {
     return this.invitations.create(user, dto);
   }
 
@@ -29,7 +29,7 @@ export class InvitationsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Accept an invitation with the authenticated wallet' })
   @ApiResponse({ status: 410, description: 'Invitation expired or already used' })
-  accept(@Param('token') token: string, @CurrentUser() user: any) {
+  accept(@Param('token') token: string, @CurrentUser() user: AuthenticatedUser) {
     return this.invitations.accept(token, user);
   }
 }

@@ -2,7 +2,7 @@ import { BadRequestException, Body, ConflictException, Controller, ForbiddenExce
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -26,7 +26,7 @@ class SettlementProposalsController {
   }
 
   @Post()
-  async create(@Param('shipmentId') shipmentId: string, @Param('index') index: string, @CurrentUser() user: any, @Body() dto: ProposalDto) {
+  async create(@Param('shipmentId') shipmentId: string, @Param('index') index: string, @CurrentUser() user: AuthenticatedUser, @Body() dto: ProposalDto) {
     const m = await this.context(shipmentId, index); const address = user?.stellarAddress ?? user?.sub;
     if (![m.shipment.buyerAddress, m.shipment.supplierAddress].includes(address)) throw new ForbiddenException('Only buyer or supplier may propose settlement');
     if (await this.prisma.settlementProposal.findFirst({ where: { milestoneId: m.id, status: 'PENDING' } })) throw new ConflictException('A pending proposal already exists');
@@ -34,14 +34,14 @@ class SettlementProposalsController {
   }
 
   @Get()
-  async list(@Param('shipmentId') shipmentId: string, @Param('index') index: string, @CurrentUser() user: any) {
+  async list(@Param('shipmentId') shipmentId: string, @Param('index') index: string, @CurrentUser() user: AuthenticatedUser) {
     const m = await this.context(shipmentId, index); const address = user?.stellarAddress ?? user?.sub;
     if (![m.shipment.buyerAddress, m.shipment.supplierAddress, m.shipment.arbiterAddress].includes(address)) throw new ForbiddenException();
     return this.prisma.settlementProposal.findMany({ where: { milestoneId: m.id }, orderBy: { createdAt: 'desc' } });
   }
 
   @Post(':id/:action')
-  async respond(@Param('shipmentId') shipmentId: string, @Param('index') index: string, @Param('id') id: string, @Param('action') action: string, @CurrentUser() user: any) {
+  async respond(@Param('shipmentId') shipmentId: string, @Param('index') index: string, @Param('id') id: string, @Param('action') action: string, @CurrentUser() user: AuthenticatedUser) {
     if (!['accept', 'reject', 'withdraw'].includes(action)) throw new BadRequestException('Action must be accept, reject, or withdraw');
     const m = await this.context(shipmentId, index); const address = user?.stellarAddress ?? user?.sub;
     const proposal = await this.prisma.settlementProposal.findFirst({ where: { id, milestoneId: m.id, status: 'PENDING' } });

@@ -2,7 +2,7 @@ import { Resolver, Query, Args, ID, ResolveField, Parent, Context } from '@nestj
 import { NotFoundException, UseGuards } from '@nestjs/common';
 import { MilestoneGql, ProofSubmissionGql } from './shipment.type';
 import { GqlJwtAuthGuard } from './gql-jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { GqlLoaders } from './graphql.loaders';
 import { assertParticipant } from './graphql.access';
@@ -24,7 +24,7 @@ export class MilestoneResolver {
   @Query(() => [MilestoneGql], { description: 'Milestones of a shipment the caller participates in' })
   async milestones(
     @Args('shipmentId', { type: () => ID }) shipmentId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Context('loaders') loaders: GqlLoaders,
   ): Promise<MilestoneGql[]> {
     const shipment = await this.prisma.shipment.findUnique({ where: { id: shipmentId }, select: PARTICIPANT_SELECT });
@@ -35,7 +35,7 @@ export class MilestoneResolver {
   }
 
   @Query(() => MilestoneGql, { description: 'A single milestone by id' })
-  async milestone(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: any): Promise<MilestoneGql> {
+  async milestone(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: AuthenticatedUser): Promise<MilestoneGql> {
     const milestone = await this.prisma.milestone.findFirst({
       where: { id, deletedAt: null },
       include: { shipment: { select: PARTICIPANT_SELECT } },

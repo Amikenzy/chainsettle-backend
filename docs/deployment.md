@@ -42,6 +42,7 @@ Copy `.env.example` to `.env` and fill in every **Required** variable before sta
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string (primary) |
 | `DATABASE_REPLICA_URL` | No | — | Read-replica URL; omit to use primary for all reads |
 | `SHIPMENT_ARCHIVAL_DAYS` | No | `90` | Days before terminal shipments move to cold storage |
+| `SHIPMENT_ARCHIVAL_CRON` | No | `0 3 * * *` | Cron schedule for the archival job; invalid expressions fail at startup |
 | `JWT_SECRET` | Yes | — | 32+ random characters; never reuse across environments |
 | `JWT_EXPIRES_IN` | No | `7d` | Standard JWT expiry |
 | `IMPERSONATION_JWT_EXPIRES_IN` | No | `15m` | Admin impersonation token TTL |
@@ -263,7 +264,8 @@ Unset `DATABASE_REPLICA_URL` to keep previous single-DB behaviour.
 
 ### Cold-storage shipment archival
 
-Daily job (`ShipmentArchivalJob`, 03:00 UTC) moves `COMPLETED` / `CANCELLED`
+Scheduled job (`ShipmentArchivalJob`, `SHIPMENT_ARCHIVAL_CRON`, default `0 3 * * *`
+— daily at 03:00 server time) moves `COMPLETED` / `CANCELLED`
 shipments older than `SHIPMENT_ARCHIVAL_DAYS` (default 90) into
 `archived_shipments` and deletes them from the hot `shipments` table.
 

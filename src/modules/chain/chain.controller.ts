@@ -20,7 +20,7 @@ import { Throttle } from '@nestjs/throttler';
 import { AddressParamDto } from './address-param.dto';
 import { TxHashParamDto } from './tx-hash-param.dto';
 import { Public } from '../../common/decorators/public.decorator';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { StellarAddressThrottlerGuard } from '../../common/guards/stellar-address-throttler.guard';
 import { SubmitTransactionDto } from './dto/submit-transaction.dto';
 import { TransactionRelayService } from './transaction-relay.service';
@@ -50,7 +50,7 @@ export class ChainController {
   @UseGuards(StellarAddressThrottlerGuard)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Relay a signed transaction and track its status' })
-  submit(@Body() dto: SubmitTransactionDto, @CurrentUser() user: any) {
+  submit(@Body() dto: SubmitTransactionDto, @CurrentUser() user: AuthenticatedUser) {
     return this.relay.submit(dto.signedXdr, user);
   }
 
