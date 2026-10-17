@@ -265,8 +265,8 @@ npx prisma migrate dev --name init
 # Generate Prisma client
 npx prisma generate
 
-# (Optional) seed initial data
-# npx prisma db seed
+# Seed demo users, shipments, milestones, comments, and notifications
+npx prisma db seed
 ```
 
 ### 4. Start the development server

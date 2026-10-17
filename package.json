@@ -5,6 +5,9 @@
   "author": "ChainSettle Team",
   "private": true,
   "license": "MIT",
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  },
   "scripts": {
     "build": "nest build",
     "start": "nest start",
