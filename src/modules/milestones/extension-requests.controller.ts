@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentParticipantGuard } from '../shipments/guards/shipment-participant.guard';
 import { ExtensionRequestsService } from './extension-requests.service';
 import { CreateExtensionRequestDto, DecideExtensionRequestDto } from './dto/extension-request.dto';
@@ -41,7 +41,7 @@ export class ExtensionRequestsController {
     @Param('shipmentId') shipmentId: string,
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: CreateExtensionRequestDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.extensions.create(shipmentId, index, dto, user?.stellarAddress ?? user?.sub, user?.id);
   }
@@ -54,7 +54,7 @@ export class ExtensionRequestsController {
     @Param('index', ParseIntPipe) index: number,
     @Param('requestId') requestId: string,
     @Body() dto: DecideExtensionRequestDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.extensions.approve(shipmentId, index, requestId, dto, user?.stellarAddress ?? user?.sub, user?.id);
   }
@@ -67,7 +67,7 @@ export class ExtensionRequestsController {
     @Param('index', ParseIntPipe) index: number,
     @Param('requestId') requestId: string,
     @Body() dto: DecideExtensionRequestDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.extensions.deny(shipmentId, index, requestId, dto, user?.stellarAddress ?? user?.sub, user?.id);
   }

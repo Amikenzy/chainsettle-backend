@@ -1,7 +1,7 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PerformanceService } from './performance.service';
 import { PerformanceQueryDto } from './dto/performance-query.dto';
 
@@ -28,7 +28,7 @@ export class PerformanceController {
   getPerformance(
     @Param('stellarAddress') stellarAddress: string,
     @Query() query: PerformanceQueryDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.performance.getPerformance(
       stellarAddress,

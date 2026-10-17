@@ -18,7 +18,7 @@ import { EventsService } from './events.service';
 import { BackfillService } from './backfill.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { FindAllEventsDto } from './dto/find-all-events.dto';
 import { RewindCursorDto } from './dto/rewind-cursor.dto';
 import { StartBackfillDto } from './dto/start-backfill.dto';
@@ -145,7 +145,7 @@ export class EventsController {
   @ApiResponse({ status: 409, description: 'Poller lock held by another replica — retry shortly' })
   async rewindCursor(
     @Body() dto: RewindCursorDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Ip() ip: string,
   ) {
     const result = await this.eventsService.rewindCursor(
@@ -219,7 +219,7 @@ export class EventsController {
   @ApiResponse({ status: 409, description: 'Another backfill job is already running' })
   async startBackfill(
     @Body() dto: StartBackfillDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Ip() ip: string,
   ) {
     return this.backfillService.startBackfill(

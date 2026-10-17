@@ -40,11 +40,11 @@ import { CreateSavedFilterDto, UpdateSavedFilterDto } from './dto/saved-filter.d
 import { CreateShipmentDto, UpdateShipmentDto, CancelShipmentDto, CloneShipmentDto, BulkStatusDto, ApproveShipmentDto } from './dto/create-shipment.dto';
 import { CreateTrackingDto } from './dto/tracking.dto';
 import { FindAllShipmentsDto } from './dto/find-all-shipments.dto';
-import { AddTagDto } from './dto/tag.dto';
+import { AddTagDto, ReplaceTagsDto } from './dto/tag.dto';
 import { NoteDto } from './dto/note.dto';
 import { FindShipmentDocumentsDto } from './dto/shipment-document.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ValidateMetadataDto } from './dto/metadata.dto';
 import { ShipmentParticipantGuard } from './guards/shipment-participant.guard';
 import { ShipmentReadAccessGuard } from './guards/shipment-read-access.guard';
@@ -96,7 +96,7 @@ export class ShipmentsController {
   })
   async create(
     @Body() dto: CreateShipmentDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     if (user?.role !== UserRole.ADMIN && dto.buyerAddress !== user?.stellarAddress) {
@@ -132,7 +132,7 @@ export class ShipmentsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Find the caller's ACTIVE shipments that look like duplicates" })
   @ApiResponse({ status: 200, description: '{ possibleDuplicates: [{ id, createdAt, referenceNumber, matchReasons }] }' })
-  duplicateCheck(@Body() dto: CreateShipmentDto, @CurrentUser() user: any) {
+  duplicateCheck(@Body() dto: CreateShipmentDto, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.findPossibleDuplicates(user.stellarAddress, dto);
   }
 
@@ -143,7 +143,7 @@ export class ShipmentsController {
   @Get()
   @ApiOperation({ summary: 'List shipments with chronological filters and pagination' })
   @ApiResponse({ status: 200, description: 'Filtered list of shipments' })
-  async findAll(@CurrentUser() user: any, @Query() query: FindAllShipmentsDto) {
+  async findAll(@CurrentUser() user: AuthenticatedUser, @Query() query: FindAllShipmentsDto) {
     if (query.cursor && query.page) {
       throw new BadRequestException('cursor and page are mutually exclusive');
     }
@@ -217,7 +217,7 @@ export class ShipmentsController {
   })
   @ApiResponse({ status: 200, description: 'Paginated cold-archived shipments' })
   findArchived(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('status') status?: string,
@@ -240,7 +240,7 @@ export class ShipmentsController {
   @ApiOperation({ summary: 'Get a cold-archived shipment by id' })
   @ApiResponse({ status: 200, description: 'Archived shipment with full history' })
   @ApiResponse({ status: 404, description: 'Archived shipment not found' })
-  findArchivedOne(@Param('id') id: string, @CurrentUser() user: any) {
+  findArchivedOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     const isAdmin = user?.role === UserRole.ADMIN;
     return this.shipmentsService.findArchivedOne(id, user?.stellarAddress, isAdmin);
   }
@@ -255,7 +255,7 @@ export class ShipmentsController {
   @ApiOperation({ summary: 'Export shipments as CSV or PDF' })
   @ApiQuery({ name: 'format', required: false, enum: ['csv', 'pdf'], description: 'csv (default) or pdf' })
   async export(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Query('format') format: string = 'csv',
     @Res() res: Response,
   ) {
@@ -290,7 +290,7 @@ export class ShipmentsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get status for multiple shipments by ID (max 50)' })
   @ApiResponse({ status: 200, description: 'Map of shipment id to status' })
-  bulkStatus(@Body() dto: BulkStatusDto, @CurrentUser() user: any) {
+  bulkStatus(@Body() dto: BulkStatusDto, @CurrentUser() user: AuthenticatedUser) {
     const isAdmin = user?.role === UserRole.ADMIN;
     return this.shipmentsService.bulkStatus(dto.ids, user.stellarAddress, isAdmin);
   }
@@ -332,7 +332,7 @@ export class ShipmentsController {
   @ApiResponse({ status: 400, description: 'File too large, no file, or too many rows' })
   async importCsv(
     @UploadedFile() file: Express.Multer.File,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     if (!file) {
       throw new BadRequestException('A CSV file must be provided in the "file" field');
@@ -360,12 +360,12 @@ export class ShipmentsController {
   @ApiHeader({ name: 'If-Match', required: false, description: 'ETag from GET /shipments/:id' })
   async replaceTags(
     @Param('id') id: string,
-    @Body() body: { tags: string[] },
-    @CurrentUser() user: any,
+    @Body() body: ReplaceTagsDto,
+    @CurrentUser() user: AuthenticatedUser,
     @Res({ passthrough: true }) res: Response,
     @Headers('if-match') ifMatch?: string,
   ) {
-    const result = await this.shipmentsService.replaceTags(id, body?.tags, user?.stellarAddress, user?.id, ifMatch);
+    const result = await this.shipmentsService.replaceTags(id, body.tags, user?.stellarAddress, user?.id, ifMatch);
     res.setHeader('ETag', await this.shipmentsService.getEtag(id));
     return result;
   }
@@ -377,7 +377,7 @@ export class ShipmentsController {
   @Get('mine/summary')
   @ApiOperation({ summary: "Get ACTIVE shipment counts grouped by the caller's role" })
   @ApiResponse({ status: 200, description: 'Role summary for the caller' })
-  getRoleSummary(@CurrentUser() user: any) {
+  getRoleSummary(@CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.getRoleSummary(user.stellarAddress);
   }
 
@@ -391,7 +391,7 @@ export class ShipmentsController {
   @ApiOperation({ summary: 'Create an admin note for a shipment' })
   @ApiResponse({ status: 201, description: 'Note created' })
   @ApiResponse({ status: 403, description: 'Only admins may create shipment notes' })
-  addNote(@Param('id') id: string, @Body() dto: NoteDto, @CurrentUser() user: any) {
+  addNote(@Param('id') id: string, @Body() dto: NoteDto, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.addNote(id, user.id, dto.body);
   }
 
@@ -428,7 +428,7 @@ export class ShipmentsController {
   getDocuments(
     @Param('id') id: string,
     @Query() query: FindShipmentDocumentsDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     const callerAddress = user?.stellarAddress ?? user?.sub;
     const isAdmin = user?.role === UserRole.ADMIN;
@@ -450,7 +450,7 @@ export class ShipmentsController {
   @ApiResponse({ status: 400, description: 'Unknown field requested' })
   async findOne(
     @Param('id') id: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Query('precision') precision?: string,
     @Query('fields') fieldsRaw?: string,
     @Query('currency') currencyOverride?: string,
@@ -471,7 +471,7 @@ export class ShipmentsController {
   @ApiOperation({ summary: 'Field-level before/after diff for a shipment audit entry' })
   @ApiResponse({ status: 200, description: 'List of changed fields (empty for legacy entries)' })
   @ApiResponse({ status: 404, description: 'Audit entry not found for this shipment' })
-  getHistoryDiff(@Param('id') id: string, @Param('auditId') auditId: string, @CurrentUser() user: any) {
+  getHistoryDiff(@Param('id') id: string, @Param('auditId') auditId: string, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.getHistoryDiff(id, auditId, user?.role === UserRole.ADMIN);
   }
 
@@ -544,7 +544,7 @@ export class ShipmentsController {
   @ApiResponse({ status: 201, description: 'Saved filter created' })
   @ApiResponse({ status: 400, description: 'Unsupported filter field' })
   @ApiResponse({ status: 409, description: 'A preset of that name already exists' })
-  createSavedFilter(@Body() dto: CreateSavedFilterDto, @CurrentUser() user: any) {
+  createSavedFilter(@Body() dto: CreateSavedFilterDto, @CurrentUser() user: AuthenticatedUser) {
     return this.savedFilters.create(user.id, dto.name, dto.filter);
   }
 
@@ -555,7 +555,7 @@ export class ShipmentsController {
   @Get('filters')
   @ApiOperation({ summary: "List the caller's saved filter presets" })
   @ApiResponse({ status: 200, description: 'Saved filters' })
-  listSavedFilters(@CurrentUser() user: any) {
+  listSavedFilters(@CurrentUser() user: AuthenticatedUser) {
     return this.savedFilters.findAll(user.id);
   }
 
@@ -567,7 +567,7 @@ export class ShipmentsController {
   @ApiOperation({ summary: 'Get a saved filter preset' })
   @ApiResponse({ status: 200, description: 'Saved filter' })
   @ApiResponse({ status: 404, description: 'Not found, or not yours' })
-  getSavedFilter(@Param('filterId') filterId: string, @CurrentUser() user: any) {
+  getSavedFilter(@Param('filterId') filterId: string, @CurrentUser() user: AuthenticatedUser) {
     return this.savedFilters.findOne(user.id, filterId);
   }
 
@@ -583,7 +583,7 @@ export class ShipmentsController {
   updateSavedFilter(
     @Param('filterId') filterId: string,
     @Body() dto: UpdateSavedFilterDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.savedFilters.update(user.id, filterId, dto);
   }
@@ -599,7 +599,7 @@ export class ShipmentsController {
   @ApiResponse({ status: 404, description: 'Not found, or not yours' })
   deleteSavedFilter(
     @Param('filterId') filterId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.savedFilters.remove(user.id, filterId);
   }
@@ -621,7 +621,7 @@ export class ShipmentsController {
   approveShipment(
     @Param('id') id: string,
     @Body() dto: ApproveShipmentDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.shipmentApprovals.approve(id, user.stellarAddress, dto?.note);
   }
@@ -654,7 +654,7 @@ export class ShipmentsController {
   @ApiResponse({ status: 200, description: 'Shipment favorited' })
   @ApiResponse({ status: 403, description: 'Not a shipment participant' })
   @ApiResponse({ status: 404, description: 'Shipment not found' })
-  favoriteShipment(@Param('id') id: string, @CurrentUser() user: any) {
+  favoriteShipment(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.favoriteShipment(id, user.id);
   }
 
@@ -668,7 +668,7 @@ export class ShipmentsController {
   @ApiOperation({ summary: 'Unfavorite a shipment' })
   @ApiResponse({ status: 200, description: 'Shipment unfavorited' })
   @ApiResponse({ status: 403, description: 'Not a shipment participant' })
-  unfavoriteShipment(@Param('id') id: string, @CurrentUser() user: any) {
+  unfavoriteShipment(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.unfavoriteShipment(id, user.id);
   }
 
@@ -681,7 +681,7 @@ export class ShipmentsController {
   @ApiOperation({ summary: 'Watch a shipment for updates' })
   @ApiResponse({ status: 200, description: 'Watching shipment' })
   @ApiResponse({ status: 404, description: 'Shipment not found' })
-  watchShipment(@Param('id') id: string, @CurrentUser() user: any) {
+  watchShipment(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.watchShipment(id, user.stellarAddress);
   }
 
@@ -693,7 +693,7 @@ export class ShipmentsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Unwatch a shipment' })
   @ApiResponse({ status: 200, description: 'Unwatched shipment' })
-  unwatchShipment(@Param('id') id: string, @CurrentUser() user: any) {
+  unwatchShipment(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.unwatchShipment(id, user.stellarAddress);
   }
 
@@ -726,7 +726,7 @@ export class ShipmentsController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateShipmentDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Res({ passthrough: true }) res: Response,
     @Headers('if-match') ifMatch?: string,
   ) {
@@ -744,7 +744,7 @@ export class ShipmentsController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a personal reminder on a shipment' })
   @ApiResponse({ status: 400, description: 'remindAt in the past or reminder limit reached' })
-  createReminder(@Param('id') id: string, @Body() dto: CreateShipmentReminderDto, @CurrentUser() user: any) {
+  createReminder(@Param('id') id: string, @Body() dto: CreateShipmentReminderDto, @CurrentUser() user: AuthenticatedUser) {
     return this.reminders.create(id, user.id, dto);
   }
 
@@ -755,7 +755,7 @@ export class ShipmentsController {
   @Get(':id/reminders')
   @UseGuards(ShipmentParticipantGuard)
   @ApiOperation({ summary: "List the caller's reminders on a shipment" })
-  listReminders(@Param('id') id: string, @CurrentUser() user: any) {
+  listReminders(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.reminders.list(id, user.id);
   }
 
@@ -769,7 +769,7 @@ export class ShipmentsController {
   async deleteReminder(
     @Param('id') id: string,
     @Param('reminderId') reminderId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     await this.reminders.remove(id, reminderId, user.id);
   }
@@ -783,14 +783,14 @@ export class ShipmentsController {
   @ApiResponse({ status: 200, description: 'Arbiter assignment accepted' })
   @ApiResponse({ status: 403, description: 'Only the designated arbiter can accept' })
   @ApiResponse({ status: 409, description: 'Assignment already resolved' })
-  arbiterAccept(@Param('id') id: string, @CurrentUser() user: any) {
+  arbiterAccept(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.arbiterAccept(id, user.stellarAddress);
   }
 
   @Post(':id/arbiter/replace')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Replace a declined or pending shipment arbiter' })
-  replaceArbiter(@Param('id') id: string, @Body('arbiterAddress') arbiterAddress: string, @CurrentUser() user: any) {
+  replaceArbiter(@Param('id') id: string, @Body('arbiterAddress') arbiterAddress: string, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.replaceArbiter(id, user.stellarAddress, arbiterAddress);
   }
   /**
@@ -802,7 +802,7 @@ export class ShipmentsController {
   @ApiResponse({ status: 200, description: 'Arbiter assignment declined' })
   @ApiResponse({ status: 403, description: 'Only the designated arbiter can decline' })
   @ApiResponse({ status: 409, description: 'Assignment already resolved' })
-  arbiterDecline(@Param('id') id: string, @CurrentUser() user: any) {
+  arbiterDecline(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.arbiterDecline(id, user.stellarAddress);
   }
 
@@ -841,7 +841,7 @@ export class ShipmentsController {
   @ApiResponse({ status: 201, description: 'Tracking update created' })
   @ApiResponse({ status: 403, description: 'Only logistics participant can submit' })
   @ApiResponse({ status: 404, description: 'Shipment not found' })
-  createTracking(@Param('id') id: string, @Body() dto: CreateTrackingDto, @CurrentUser() user: any) {
+  createTracking(@Param('id') id: string, @Body() dto: CreateTrackingDto, @CurrentUser() user: AuthenticatedUser) {
     return this.shipmentsService.createTracking(id, user.stellarAddress, dto);
   }
 
@@ -884,7 +884,7 @@ export class ShipmentsController {
     @ApiOperation({ summary: 'Get all tracking updates for a shipment in chronological order' })
     @ApiResponse({ status: 200, description: 'Tracking updates retrieved' })
     @ApiResponse({ status: 403, description: 'Not a shipment participant' })
-    getTracking(@Param('id') id: string, @CurrentUser() user: any) {
+    getTracking(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
       return this.shipmentsService.getTracking(id, user.stellarAddress);
     }
 
@@ -899,7 +899,7 @@ export class ShipmentsController {
     @ApiResponse({ status: 403, description: 'Only the buyer can modify tags' })
     @ApiResponse({ status: 404, description: 'Shipment not found' })
     @ApiResponse({ status: 409, description: 'Tag already exists or shipment is not ACTIVE' })
-    addTag(@Param('id') id: string, @Body() dto: AddTagDto, @CurrentUser() user: any) {
+    addTag(@Param('id') id: string, @Body() dto: AddTagDto, @CurrentUser() user: AuthenticatedUser) {
       return this.shipmentsService.addTag(id, user.stellarAddress, dto.tag);
     }
 
@@ -914,7 +914,7 @@ export class ShipmentsController {
     @ApiResponse({ status: 403, description: 'Only the buyer can modify tags' })
     @ApiResponse({ status: 404, description: 'Shipment not found or tag not present' })
     @ApiResponse({ status: 409, description: 'Shipment is not ACTIVE' })
-    removeTag(@Param('id') id: string, @Param('tag') tag: string, @CurrentUser() user: any) {
+    removeTag(@Param('id') id: string, @Param('tag') tag: string, @CurrentUser() user: AuthenticatedUser) {
       return this.shipmentsService.removeTag(id, user.stellarAddress, tag);
     }
   }

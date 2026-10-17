@@ -1,4 +1,16 @@
 import * as Joi from 'joi';
+import { CronTime } from 'cron';
+
+const cronExpression = Joi.string()
+  .custom((value: string, helpers) => {
+    try {
+      new CronTime(value);
+      return value;
+    } catch (_err) {
+      return helpers.error('any.invalid');
+    }
+  })
+  .messages({ 'any.invalid': '{{#label}} must be a valid cron expression' });
 
 export const envValidationSchema = Joi.object({
   // Server
@@ -28,6 +40,8 @@ export const envValidationSchema = Joi.object({
 
   // Cold-storage archival of completed/cancelled shipments (days; default 90)
   SHIPMENT_ARCHIVAL_DAYS: Joi.number().integer().min(1).max(3650).default(90),
+  // Cron schedule for the archival job (default: daily at 03:00 server time)
+  SHIPMENT_ARCHIVAL_CRON: cronExpression.default('0 3 * * *'),
 
   // Nightly deletion of read notifications older than this many days (default 90)
   NOTIFICATION_RETENTION_DAYS: Joi.number().integer().min(1).max(3650).default(90),

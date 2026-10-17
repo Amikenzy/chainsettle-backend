@@ -6,7 +6,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AddressParamDto } from './dto/address-param.dto';
 import { UpdateAvailabilityDto } from './dto/update-availability.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('arbiters')
 @ApiBearerAuth()
@@ -47,7 +47,7 @@ export class ArbitersController {
   @ApiResponse({ status: 200, description: 'Updated availability' })
   @ApiResponse({ status: 400, description: 'awayUntil is not in the future' })
   @ApiResponse({ status: 403, description: 'Arbiter role required' })
-  setAvailability(@CurrentUser() user: any, @Body() dto: UpdateAvailabilityDto) {
+  setAvailability(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateAvailabilityDto) {
     return this.arbitersService.setAvailability(user.id, dto.awayUntil, dto.awayMessage);
   }
 

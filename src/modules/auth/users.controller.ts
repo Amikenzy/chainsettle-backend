@@ -34,7 +34,7 @@ import { RevokeAllSessionsDto } from './dto/revoke-all-sessions.dto';
 import { SetPhoneDto, VerifyPhoneDto } from './dto/verify-phone.dto';
 import { LoginHistoryQueryDto } from './dto/login-history-query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { BlockImpersonation } from '../../common/decorators/block-impersonation.decorator';
 import { AuditLogService } from '../audit-logs/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -56,7 +56,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Get the authenticated user profile' })
   @ApiResponse({ status: 200, description: 'Returns user profile with avatarUrl' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  getProfile(@CurrentUser() user: any) {
+  getProfile(@CurrentUser() user: AuthenticatedUser) {
     return this.authService.getProfile(user.id);
   }
 
@@ -134,7 +134,7 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Login history records' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   getLoginHistory(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Query() query: LoginHistoryQueryDto,
   ) {
     return this.authService.getLoginHistory(
@@ -180,7 +180,7 @@ export class UsersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Blocked during impersonation' })
   @ApiResponse({ status: 409, description: 'Email already in use' })
-  updateProfile(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
+  updateProfile(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateProfileDto) {
     return this.authService.updateProfile(user.id, dto);
   }
 
@@ -203,7 +203,7 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Sessions revoked — returns { revokedCount }' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async revokeAllSessions(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Body() dto: RevokeAllSessionsDto,
     @Req() req: any,
   ) {

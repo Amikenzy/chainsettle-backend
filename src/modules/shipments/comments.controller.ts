@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CommentsService } from './comments.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { ShipmentParticipantGuard } from './guards/shipment-participant.guard';
@@ -32,7 +32,7 @@ export class CommentsController {
   create(
     @Param('id') shipmentId: string,
     @Body() dto: CreateCommentDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.commentsService.create(shipmentId, user.sub, user.stellarAddress, dto);
   }
@@ -50,7 +50,7 @@ export class CommentsController {
     @Param('id') shipmentId: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
-    @CurrentUser() user: any = {},
+    @CurrentUser() user: AuthenticatedUser = {},
     @Query('milestoneIndex') milestoneIndex?: string,
   ) {
     let milestoneFilter: number | undefined;
@@ -76,7 +76,7 @@ export class CommentsController {
     @Param('commentId') commentId: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
-    @CurrentUser() user: any = {},
+    @CurrentUser() user: AuthenticatedUser = {},
   ) {
     return this.commentsService.findReplies(shipmentId, commentId, user.stellarAddress, page, limit);
   }
@@ -92,7 +92,7 @@ export class CommentsController {
   pin(
     @Param('id') shipmentId: string,
     @Param('commentId') commentId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.commentsService.setPinned(shipmentId, commentId, true, user.sub, user.stellarAddress);
   }
@@ -108,7 +108,7 @@ export class CommentsController {
   unpin(
     @Param('id') shipmentId: string,
     @Param('commentId') commentId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.commentsService.setPinned(shipmentId, commentId, false, user.sub, user.stellarAddress);
   }
@@ -119,7 +119,7 @@ export class CommentsController {
   remove(
     @Param('id') shipmentId: string,
     @Param('commentId') commentId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.commentsService.remove(shipmentId, commentId, user.sub, user.stellarAddress);
   }

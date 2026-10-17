@@ -13,7 +13,7 @@ import { CalendarService } from './calendar.service';
 import { MilestonesService } from './milestones.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 
 /**
  * Per-user milestone calendar subscription.
@@ -45,7 +45,7 @@ export class UserCalendarController {
   @ApiResponse({ status: 200, description: 'Upcoming milestones sorted by dueAt ascending' })
   @ApiResponse({ status: 400, description: 'days out of range' })
   getUpcoming(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthenticatedUser,
     @Query('days') days?: string,
     @Query('includeOverdue') includeOverdue?: string,
   ) {
@@ -66,7 +66,7 @@ export class UserCalendarController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get a subscription token for your milestone calendar feed' })
   @ApiResponse({ status: 200, description: 'Subscription token and feed path' })
-  getCalendarToken(@CurrentUser() user: any) {
+  getCalendarToken(@CurrentUser() user: AuthenticatedUser) {
     const token = this.calendar.issueToken(user.id);
     return {
       token,
