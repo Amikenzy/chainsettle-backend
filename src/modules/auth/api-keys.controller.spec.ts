@@ -26,6 +26,7 @@ import { ApiKeysController } from './api-keys.controller';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditLogService } from '../audit-logs/audit-log.service';
+import { RedisService } from '../../common/redis/redis.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -77,6 +78,14 @@ const mockAuditLog = {
   record: jest.fn().mockResolvedValue(undefined),
 };
 
+const mockRedisClient = {
+  mget: jest.fn().mockResolvedValue(new Array(30).fill(null)),
+};
+
+const mockRedis = {
+  getClient: jest.fn().mockReturnValue(mockRedisClient),
+};
+
 // ---------------------------------------------------------------------------
 // Module setup
 // ---------------------------------------------------------------------------
@@ -92,6 +101,7 @@ describe('ApiKeysController', () => {
       providers: [
         { provide: PrismaService, useValue: mockPrisma },
         { provide: AuditLogService, useValue: mockAuditLog },
+        { provide: RedisService, useValue: mockRedis },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -412,6 +422,75 @@ describe('ApiKeysController', () => {
       const result = await controller.create({ id: 'jwt-user-1' }, { name: 'Key' });
 
       expect(result.scopes).toEqual(['read', 'write']);
+    });
+  });
+
+  // ── GET /auth/api-keys/:id/usage ─────────────────────────────────────────
+
+  describe('getUsage()', () => {
+    it('returns 30-day daily usage and lastUsedAt for the key owner', async () => {
+      const lastUsed = new Date('2026-10-18T12:00:00Z');
+      mockPrisma.apiKey.findUnique.mockResolvedValue({
+        id: 'key-1',
+        name: 'Production Key',
+        userId: USER_ID,
+        lastUsedAt: lastUsed,
+      });
+
+      // Mock 30 daily counts: 28 days null, one day '5', today '10'
+      const counts = new Array(30).fill(null);
+      counts[0] = '5';
+      counts[29] = '10';
+      mockRedisClient.mget.mockResolvedValue(counts);
+
+      const result = await controller.getUsage(currentUser, 'key-1');
+
+      expect(mockPrisma.apiKey.findUnique).toHaveBeenCalledWith({
+        where: { id: 'key-1' },
+        select: {
+          id: true,
+          userId: true,
+          name: true,
+          lastUsedAt: true,
+        },
+      });
+
+      expect(mockRedisClient.mget).toHaveBeenCalledTimes(1);
+      const mgetArgs = mockRedisClient.mget.mock.calls[0];
+      expect(mgetArgs).toHaveLength(30);
+      expect(mgetArgs[0]).toContain('chainsettle:api-key:usage:key-1:');
+
+      expect(result).toMatchObject({
+        id: 'key-1',
+        name: 'Production Key',
+        lastUsedAt: lastUsed,
+        totalRequests30d: 15,
+      });
+      expect(result.dailyUsage).toHaveLength(30);
+      expect(result.dailyUsage[0].count).toBe(5);
+      expect(result.dailyUsage[29].count).toBe(10);
+    });
+
+    it('throws NotFoundException when the key does not exist', async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValue(null);
+
+      await expect(controller.getUsage(currentUser, 'non-existent')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws ForbiddenException when requested by a different user', async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValue({
+        id: 'key-1',
+        name: 'Other Key',
+        userId: 'different-user',
+        lastUsedAt: null,
+      });
+
+      await expect(controller.getUsage(currentUser, 'key-1')).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(mockRedisClient.mget).not.toHaveBeenCalled();
     });
   });
 });
