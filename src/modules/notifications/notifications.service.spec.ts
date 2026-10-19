@@ -16,7 +16,10 @@ const mockNotification = { id: 'notif-1', userId: 'user-1', type: NotificationTy
 
 function buildPrisma(prefOverride?: object, slackWebhookUrl: string | null = null) {
   return {
-    user: { findUnique: jest.fn().mockResolvedValue(mockUser) },
+    user: {
+      findUnique: jest.fn().mockResolvedValue(mockUser),
+      findFirst: jest.fn().mockResolvedValue(mockUser),
+    },
     notification: {
       create: jest.fn().mockResolvedValue(mockNotification),
       update: jest.fn().mockResolvedValue(mockNotification),
@@ -38,12 +41,17 @@ function buildPrisma(prefOverride?: object, slackWebhookUrl: string | null = nul
   };
 }
 
-async function buildService(prisma: any) {
+async function buildService(prisma: any, configOverrides: Record<string, any> = {}) {
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       NotificationsService,
       { provide: PrismaService, useValue: prisma },
-      { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(undefined) } },
+      {
+        provide: ConfigService,
+        useValue: {
+          get: jest.fn((k: string, def?: any) => (k in configOverrides ? configOverrides[k] : def)),
+        },
+      },
       {
         provide: I18nService,
         useValue: {
@@ -203,8 +211,8 @@ describe('NotificationsService — preferences', () => {
 
       expect(result.data).toHaveLength(2);
       expect(result.data[0]).toMatchObject({ shipmentId: 'ship-1', referenceNumber: 'REF-123', unreadCount: 1 });
-      expect(result.data[0].notifications).toHaveLength(2);
-      expect(result.data[1].shipmentId).toBeNull();
+      expect((result.data[0] as any).notifications).toHaveLength(2);
+      expect((result.data[1] as any).shipmentId).toBeNull();
     });
 
     it('marks all notifications for a shipment as read and returns an updated count', async () => {
@@ -382,6 +390,146 @@ describe('NotificationsService — snooze', () => {
       const ltValue: Date = callWhere.OR[1].snoozedUntil.lt;
       expect(ltValue.getTime()).toBeGreaterThanOrEqual(before.getTime());
       expect(ltValue.getTime()).toBeLessThanOrEqual(after.getTime());
+    });
+  });
+
+  // ── One-Click Unsubscribe (#538) ──────────────────────────────────────────
+
+  describe('One-Click Unsubscribe (#538)', () => {
+    it('generates and verifies a valid unsubscribe token', async () => {
+      const prisma = buildPrisma();
+      const service = await buildService(prisma, { JWT_SECRET: 'super-secret-key' });
+
+      const token = service.generateUnsubscribeToken('user-1', NotificationType.PAYMENT_RELEASED);
+      expect(typeof token).toBe('string');
+      expect(token).toContain('.');
+
+      const payload = service.verifyUnsubscribeToken(token);
+      expect(payload).toEqual({
+        userId: 'user-1',
+        type: NotificationType.PAYMENT_RELEASED,
+      });
+    });
+
+    it('rejects a tampered unsubscribe token signature', async () => {
+      const prisma = buildPrisma();
+      const service = await buildService(prisma, { JWT_SECRET: 'super-secret-key' });
+
+      const token = service.generateUnsubscribeToken('user-1', NotificationType.PAYMENT_RELEASED);
+      const tampered = token.slice(0, -4) + 'abcd';
+
+      expect(() => service.verifyUnsubscribeToken(tampered)).toThrow();
+    });
+
+    it('rejects a tampered payload', async () => {
+      const prisma = buildPrisma();
+      const service = await buildService(prisma, { JWT_SECRET: 'super-secret-key' });
+
+      const token = service.generateUnsubscribeToken('user-1', NotificationType.PAYMENT_RELEASED);
+      const [, sig] = token.split('.');
+      const evilPayload = Buffer.from(JSON.stringify({ userId: 'evil-user', type: 'ALL', exp: Date.now() + 100000 })).toString('base64url');
+      const tampered = `${evilPayload}.${sig}`;
+
+      expect(() => service.verifyUnsubscribeToken(tampered)).toThrow();
+    });
+
+    it('rejects an expired unsubscribe token', async () => {
+      const prisma = buildPrisma();
+      const service = await buildService(prisma, { JWT_SECRET: 'super-secret-key' });
+
+      // Create an expired token manually
+      const secret = 'super-secret-key';
+      const crypto = await import('crypto');
+      const payload = { userId: 'user-1', type: 'ALL', exp: Date.now() - 1000 };
+      const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
+      const sig = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+      const expiredToken = `${data}.${sig}`;
+
+      expect(() => service.verifyUnsubscribeToken(expiredToken)).toThrow('Unsubscribe token has expired');
+    });
+
+    it('rejects malformed token strings', async () => {
+      const prisma = buildPrisma();
+      const service = await buildService(prisma);
+
+      expect(() => service.verifyUnsubscribeToken('')).toThrow();
+      expect(() => service.verifyUnsubscribeToken('no-dot-token')).toThrow();
+      expect(() => service.verifyUnsubscribeToken('too.many.dots.here')).toThrow();
+    });
+
+    it('unsubscribes a specific notification type', async () => {
+      const prisma = buildPrisma();
+      const service = await buildService(prisma, { JWT_SECRET: 'super-secret-key' });
+      const token = service.generateUnsubscribeToken('user-1', NotificationType.DISPUTE_RAISED);
+
+      const result = await service.unsubscribe(token);
+      expect(result.success).toBe(true);
+      expect(prisma.notificationPreference.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'user-1' },
+          data: expect.objectContaining({
+            preferences: expect.objectContaining({
+              [NotificationType.DISPUTE_RAISED]: expect.objectContaining({ email: false }),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('unsubscribes ALL notification types when type is ALL', async () => {
+      const prisma = buildPrisma();
+      const service = await buildService(prisma, { JWT_SECRET: 'super-secret-key' });
+      const token = service.generateUnsubscribeToken('user-1', 'ALL');
+
+      const result = await service.unsubscribe(token);
+      expect(result.success).toBe(true);
+
+      const updateCall = prisma.notificationPreference.update.mock.calls[0][0];
+      const updatedPrefs = updateCall.data.preferences;
+      for (const t of ALL_TYPES) {
+        expect(updatedPrefs[t].email).toBe(false);
+      }
+    });
+
+    it('throws NotFoundException if user in token does not exist', async () => {
+      const prisma = buildPrisma();
+      prisma.user.findUnique.mockResolvedValue(null);
+      const service = await buildService(prisma, { JWT_SECRET: 'super-secret-key' });
+      const token = service.generateUnsubscribeToken('non-existent-user', 'ALL');
+
+      await expect(service.unsubscribe(token)).rejects.toThrow();
+    });
+
+    it('generates unsubscribe headers in sendEmail', async () => {
+      const prisma = buildPrisma();
+      const service = await buildService(prisma, {
+        JWT_SECRET: 'super-secret-key',
+        API_BASE_URL: 'https://api.chainsettle.io',
+      });
+
+      const sendMailMock = jest.fn().mockResolvedValue({});
+      (service as any).transporter = { sendMail: sendMailMock };
+
+      await service.sendEmail(
+        'user@example.com',
+        'Test Subject',
+        'Test Body',
+        undefined,
+        NotificationType.PAYMENT_RELEASED,
+        {},
+        'en',
+        'user-1',
+      );
+
+      expect(sendMailMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'user@example.com',
+          headers: expect.objectContaining({
+            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+            'List-Unsubscribe': expect.stringMatching(/^<https:\/\/api\.chainsettle\.io\/api\/v1\/notifications\/unsubscribe\?token=/),
+          }),
+        }),
+      );
     });
   });
 });
