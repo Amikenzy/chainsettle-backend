@@ -88,6 +88,39 @@ export class NotificationsController {
     return digest || { subject: '', html: '' };
   }
 
+  // ── One-Click Unsubscribe (RFC 8058) ─────────────────────────────────────────
+
+  @Public()
+  @Post('unsubscribe')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'One-click unsubscribe from email notifications (RFC 8058)',
+    description: 'Accepts a signed token via query parameter or request body and opts the user out of the corresponding notification email type.',
+  })
+  async unsubscribe(
+    @Query('token') queryToken?: string,
+    @Body() body?: { token?: string },
+  ) {
+    const token = queryToken || body?.token;
+    if (!token) {
+      throw new BadRequestException('Unsubscribe token is required');
+    }
+    return this.notificationsService.unsubscribe(token);
+  }
+
+  @Public()
+  @Get('unsubscribe')
+  @ApiOperation({
+    summary: 'Browser link unsubscribe from email notifications',
+    description: 'Accepts a signed token via query parameter for users clicking the unsubscribe link directly in an email footer.',
+  })
+  async unsubscribeGet(@Query('token') token?: string) {
+    if (!token) {
+      throw new BadRequestException('Unsubscribe token is required');
+    }
+    return this.notificationsService.unsubscribe(token);
+  }
+
   // ── Snooze ─────────────────────────────────────────────────────────────────
 
   @Post(':id/snooze')

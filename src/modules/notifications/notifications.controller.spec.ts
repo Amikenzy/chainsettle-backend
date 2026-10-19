@@ -1,7 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
+import { WebPushService } from './web-push.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { BadRequestException } from '@nestjs/common';
 
 describe('NotificationsController', () => {
   let controller: NotificationsController;
@@ -20,12 +22,20 @@ describe('NotificationsController', () => {
       findOne: jest.fn(),
       snooze: jest.fn(),
       unsnooze: jest.fn(),
+      unsubscribe: jest.fn(),
+    };
+
+    const mockWebPushService = {
+      getPublicKey: jest.fn().mockReturnValue('mock-key'),
+      subscribe: jest.fn().mockResolvedValue(undefined),
+      unsubscribe: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [NotificationsController],
       providers: [
         { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: WebPushService, useValue: mockWebPushService },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -110,6 +120,46 @@ describe('NotificationsController', () => {
       notificationsService.unsnooze.mockRejectedValue(new NotFoundException('Notification not found'));
 
       await expect(controller.unsnooze(notifId, userId)).rejects.toThrow('Notification not found');
+    });
+  });
+
+  describe('unsubscribe', () => {
+    const validToken = 'valid.token.here';
+
+    it('unsubscribes via query parameter on POST', async () => {
+      const mockResult = { success: true, message: 'Successfully unsubscribed', type: 'PAYMENT_RELEASED' };
+      notificationsService.unsubscribe.mockResolvedValue(mockResult);
+
+      const result = await controller.unsubscribe(validToken);
+      expect(notificationsService.unsubscribe).toHaveBeenCalledWith(validToken);
+      expect(result).toEqual(mockResult);
+    });
+
+    it('unsubscribes via body parameter on POST', async () => {
+      const mockResult = { success: true, message: 'Successfully unsubscribed', type: 'ALL' };
+      notificationsService.unsubscribe.mockResolvedValue(mockResult);
+
+      const result = await controller.unsubscribe(undefined, { token: validToken });
+      expect(notificationsService.unsubscribe).toHaveBeenCalledWith(validToken);
+      expect(result).toEqual(mockResult);
+    });
+
+    it('throws BadRequestException on POST when no token provided', async () => {
+      await expect(controller.unsubscribe(undefined, undefined)).rejects.toThrow(BadRequestException);
+      await expect(controller.unsubscribe(undefined, {})).rejects.toThrow(BadRequestException);
+    });
+
+    it('unsubscribes via GET request with token query param', async () => {
+      const mockResult = { success: true, message: 'Successfully unsubscribed', type: 'DISPUTE_RAISED' };
+      notificationsService.unsubscribe.mockResolvedValue(mockResult);
+
+      const result = await controller.unsubscribeGet(validToken);
+      expect(notificationsService.unsubscribe).toHaveBeenCalledWith(validToken);
+      expect(result).toEqual(mockResult);
+    });
+
+    it('throws BadRequestException on GET when no token provided', async () => {
+      await expect(controller.unsubscribeGet(undefined)).rejects.toThrow(BadRequestException);
     });
   });
 });
