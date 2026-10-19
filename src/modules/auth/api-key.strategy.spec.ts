@@ -8,6 +8,7 @@
 
 import { UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { ApiKeyStrategy, API_KEY_USAGE_PREFIX, API_KEY_USAGE_TTL_SECONDS } from './api-key.strategy';
 
 // ---------------------------------------------------------------------------
 // Inline the validate logic (mirrors api-key.strategy.ts)
@@ -197,5 +198,66 @@ describe('ApiKeyStrategy — validate logic (with scopes + grace period)', () =>
       updateFn,
     );
     expect(updateFn).toHaveBeenCalledWith('k1');
+  });
+});
+
+describe('ApiKeyStrategy with Redis usage counter', () => {
+  let strategy: ApiKeyStrategy;
+  let mockPrisma: any;
+  let mockRedis: any;
+  let mockRedisClient: any;
+
+  beforeEach(() => {
+    mockPrisma = {
+      apiKey: {
+        findUnique: jest.fn(),
+        update: jest.fn().mockReturnValue({ catch: jest.fn() }),
+      },
+    };
+
+    mockRedisClient = {
+      incr: jest.fn().mockReturnValue({
+        then: jest.fn().mockImplementation((cb) => {
+          cb(1);
+          return { catch: jest.fn() };
+        }),
+      }),
+      expire: jest.fn().mockReturnValue({ catch: jest.fn() }),
+    };
+
+    mockRedis = {
+      getClient: jest.fn().mockReturnValue(mockRedisClient),
+    };
+
+    strategy = new ApiKeyStrategy(mockPrisma, mockRedis);
+  });
+
+  it('increments daily usage counter and sets 31-day expiry on first request', async () => {
+    const rawKey = 'testkey';
+    const keyHash = createHash('sha256').update(rawKey).digest('hex');
+    mockPrisma.apiKey.findUnique.mockResolvedValue({
+      id: 'key-123',
+      keyHash,
+      scopes: ['read'],
+      revokedAt: null,
+      expiresAt: null,
+      gracePeriodEndsAt: null,
+      user: { id: 'u1', deactivatedAt: null },
+    });
+
+    const req = {
+      headers: { 'x-api-key': rawKey },
+    } as any;
+
+    const result = await strategy.validate(req);
+
+    expect(result).toMatchObject({ id: 'u1', _apiKeyScopes: ['read'] });
+
+    const today = new Date().toISOString().slice(0, 10);
+    expect(mockRedisClient.incr).toHaveBeenCalledWith(`${API_KEY_USAGE_PREFIX}key-123:${today}`);
+    expect(mockRedisClient.expire).toHaveBeenCalledWith(
+      `${API_KEY_USAGE_PREFIX}key-123:${today}`,
+      API_KEY_USAGE_TTL_SECONDS,
+    );
   });
 });

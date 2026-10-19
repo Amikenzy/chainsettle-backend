@@ -4,10 +4,17 @@ import { Strategy } from 'passport-custom';
 import { Request } from 'express';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { RedisService } from '../../common/redis/redis.service';
+
+export const API_KEY_USAGE_PREFIX = 'chainsettle:api-key:usage:';
+export const API_KEY_USAGE_TTL_SECONDS = 31 * 24 * 60 * 60; // 31 days
 
 @Injectable()
 export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {
     super();
   }
 
@@ -56,6 +63,19 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
       .update({
         where: { id: apiKey.id },
         data: { lastUsedAt: new Date() },
+      })
+      .catch(() => null);
+
+    // Record daily request usage in Redis (expires after 31 days)
+    const today = new Date().toISOString().slice(0, 10);
+    const usageKey = `${API_KEY_USAGE_PREFIX}${apiKey.id}:${today}`;
+    const client = this.redis.getClient();
+    client
+      .incr(usageKey)
+      .then((val) => {
+        if (val === 1) {
+          client.expire(usageKey, API_KEY_USAGE_TTL_SECONDS).catch(() => null);
+        }
       })
       .catch(() => null);
 
