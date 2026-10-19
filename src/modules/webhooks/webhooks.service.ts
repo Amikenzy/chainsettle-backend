@@ -88,6 +88,13 @@ function nowUnixSeconds(): number {
   return Math.floor(Date.now() / 1_000);
 }
 
+interface EndpointWithOptionalEncryptedHeaders {
+  id: string;
+  url: string;
+  secret: string;
+  headers?: unknown;
+}
+
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -207,7 +214,7 @@ export class WebhooksService {
     if (dto.headers !== undefined) {
       const cleared = Object.keys(dto.headers).length === 0;
       data.headers = cleared
-        ? Prisma.AnyNull
+        ? Prisma.DbNull
         : (encryptHeaders(dto.headers, this.encryptionKey) as Prisma.InputJsonValue);
     }
 
@@ -584,7 +591,7 @@ export class WebhooksService {
 
   // ── Auto-retry scheduler ───────────────────────────────────────────────────
 
-  @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_MINUTE, { name: 'webhook-retry-queue' })
   async processRetryQueue() {
     const due = await this.prisma.webhookDelivery.findMany({
       where: {
