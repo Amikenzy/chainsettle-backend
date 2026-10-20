@@ -58,6 +58,19 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
     return this.horizonPool.proxy;
   }
 
+  /**
+   * NestJS lifecycle hook. Builds the failover-aware RPC and Horizon client
+   * pools from configuration, verifies each endpoint's network passphrase,
+   * and starts the periodic endpoint-health probe loop.
+   *
+   * Reads `STELLAR_RPC_URLS`/`STELLAR_RPC_URL`, `STELLAR_HORIZON_URLS`/
+   * `STELLAR_HORIZON_URL`, `STELLAR_NETWORK` and `CHAINSETTTLE_CONTRACT_ID`.
+   *
+   * @remarks Hits both Soroban RPC (`getNetwork`, `getLatestLedger`) and
+   * Horizon (root endpoint) once per configured endpoint during the initial
+   * health probe. Throws if the RPC or Horizon pool is constructed without
+   * any configured URL.
+   */
   onModuleInit() {
     const rpcUrls = parseUrlList(
       this.config.get<string>('STELLAR_RPC_URLS'),
@@ -107,11 +120,25 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Contract ID: ${this.contractId}`);
   }
 
+  /**
+   * NestJS lifecycle hook. Stops the periodic endpoint-health probe timer.
+   *
+   * @remarks Does not make any network calls.
+   */
   onModuleDestroy() {
     if (this.healthTimer) clearInterval(this.healthTimer);
   }
 
-  /** Probes all RPC/Horizon endpoints and publishes their health as metrics. */
+  /**
+   * Probes all configured Soroban RPC and Horizon endpoints and publishes
+   * their health (and active status) as OpenTelemetry/Prometheus metrics.
+   *
+   * @returns Resolves once every endpoint has been probed and metrics updated.
+   *
+   * @remarks Hits Soroban RPC (`getNetwork`, `getLatestLedger`) and Horizon
+   * (root endpoint) once per configured endpoint. Individual probe failures
+   * are recorded as unhealthy endpoints rather than thrown.
+   */
   async refreshEndpointHealth(): Promise<void> {
     await Promise.all([this.rpcPool.healthCheck(), this.horizonPool.healthCheck()]);
     for (const [type, pool] of [['rpc', this.rpcPool], ['horizon', this.horizonPool]] as const) {
@@ -121,7 +148,17 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Active endpoint and per-endpoint health for GET /health/detailed. */
+  /**
+   * Returns the currently active endpoint URL and per-endpoint health details
+   * for both the Soroban RPC and Horizon pools.
+   *
+   * @returns Snapshot shaped for `GET /health/detailed`:
+   * `{ rpc: { active, endpoints }, horizon: { active, endpoints } }`, where
+   * each `endpoints` entry includes url, healthy, active, latencyMs,
+   * latestLedger, consecutiveFailures, circuitOpenUntil and lastError.
+   *
+   * @remarks Pure in-memory read of cached pool state — makes no network calls.
+   */
   getEndpointHealth() {
     return {
       rpc: { active: this.rpcPool.activeUrl, endpoints: this.rpcPool.status() },
@@ -133,14 +170,38 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
   // RPC CLIENT ACCESS
   // ----------------------------------------------------------
 
+  /**
+   * Returns the failover-aware Soroban RPC client proxy.
+   *
+   * @returns A `SorobanRpc.Server` proxy that routes each call to the
+   * healthiest endpoint and fails over on network/5xx errors.
+   *
+   * @remarks Returns an in-memory proxy — makes no network calls itself;
+   * calls made on the returned client hit Soroban RPC.
+   */
   getClient(): SorobanRpc.Server {
     return this.rpcClient;
   }
 
+  /**
+   * Returns the Stellar network passphrase the service is configured for.
+   *
+   * @returns `Networks.PUBLIC` when `STELLAR_NETWORK=mainnet`, otherwise
+   * `Networks.TESTNET`.
+   *
+   * @remarks Pure in-memory read — makes no network calls.
+   */
   getNetworkPassphrase(): string {
     return this.networkPassphrase;
   }
 
+  /**
+   * Returns the configured ChainSettle Soroban contract address.
+   *
+   * @returns The contract address from `CHAINSETTTLE_CONTRACT_ID`.
+   *
+   * @remarks Pure in-memory read — makes no network calls.
+   */
   getContractId(): string {
     return this.contractId;
   }
@@ -155,7 +216,12 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
    *
    * @param startLedger - The ledger to start scanning from
    * @param filters     - Optional array of event topic filters (event names)
-   * @returns Array of raw SorobanRpc events
+   * @returns Array of raw SorobanRpc events; an empty array when no events
+   * match or when the RPC call fails (errors are logged, not rethrown).
+   *
+   * @remarks Hits Soroban RPC (`getEvents`). At most 100 events are returned
+   * per call, filtered to the configured contract. Callers should poll with
+   * `startLedger = lastEvent.ledger + 1` to walk forward.
    */
   async fetchContractEvents(
     startLedger: number,
@@ -210,7 +276,16 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
    *
    * @param method    - Contract function name
    * @param args      - Array of ScVal arguments
-   * @returns Decoded native JS value from the contract
+   * @returns Decoded native JS value from the contract, or `null` when the
+   * simulation succeeds but produces no return value.
+   *
+   * @throws If the RPC reports a simulation error (`Contract simulation
+   * error: ...`), or if the RPC/network call itself fails. The error is
+   * logged before being rethrown.
+   *
+   * @remarks Hits Soroban RPC (`getAccount`, `simulateTransaction`). No
+   * transaction is submitted and no fee is paid; a throwaway keypair is used
+   * purely as the (unsent) simulation source account.
    */
   async simulateContractCall(method: string, args: xdr.ScVal[]): Promise<any> {
     return withSpan(
@@ -266,6 +341,14 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
    * Converts a token amount from its smallest on-chain unit to a human-readable
    * decimal string using the given decimal precision.
    *
+   * @param amount   - Integer amount in the token's smallest unit (stroops-like)
+   * @param decimals - Number of decimal places the token uses (default 7, e.g. USDC/EURC)
+   * @returns Decimal string with exactly `decimals` fractional digits.
+   *
+   * @throws `SyntaxError` from `BigInt()` if `amount` is not a valid integer string.
+   *
+   * @remarks Pure computation — makes no network calls.
+   *
    * @example toHumanAmount(10_000_000n, 7) → "1.0000000"  (USDC/EURC — 7 dp)
    * @example toHumanAmount(1_000_000n,  6) → "1.000000"   (6-decimal token)
    */
@@ -280,6 +363,16 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
   /**
    * Converts a human-readable token amount to its smallest on-chain unit.
    *
+   * @param amount   - Decimal string, e.g. "1.5". Fractional digits beyond
+   * `decimals` are truncated; missing digits are zero-padded.
+   * @param decimals - Number of decimal places the token uses (default 7)
+   * @returns Integer amount as a `bigint` in the token's smallest unit.
+   *
+   * @throws `SyntaxError` from `BigInt()` if the whole or fractional part of
+   * `amount` is not a valid integer (e.g. "abc.x", "" or "1e6").
+   *
+   * @remarks Pure computation — makes no network calls.
+   *
    * @example toBaseUnit("1.5", 7) → 15_000_000n
    * @example toBaseUnit("1.5", 6) →  1_500_000n
    */
@@ -289,12 +382,32 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
     return BigInt(whole) * BigInt(10 ** decimals) + BigInt(paddedFraction);
   }
 
-  /** @deprecated Use toHumanAmount(amount, 7) */
+  /**
+   * Converts stroops (7-decimal base units) to a human-readable USDC string.
+   *
+   * @param stroops - Integer amount in the token's smallest unit
+   * @returns Decimal string with 7 fractional digits.
+   *
+   * @throws `SyntaxError` if `stroops` is not a valid integer.
+   *
+   * @deprecated Use `toHumanAmount(amount, 7)` instead.
+   * @remarks Pure computation — makes no network calls.
+   */
   stroopsToUsdc(stroops: bigint | string): string {
     return this.toHumanAmount(stroops, 7);
   }
 
-  /** @deprecated Use toBaseUnit(amount, 7) */
+  /**
+   * Converts a human-readable USDC amount to stroops (7-decimal base units).
+   *
+   * @param usdc - Decimal string, e.g. "1.5"
+   * @returns Integer amount as a `bigint` in 7-decimal base units.
+   *
+   * @throws `SyntaxError` if `usdc` is not a valid decimal integer string.
+   *
+   * @deprecated Use `toBaseUnit(amount, 7)` instead.
+   * @remarks Pure computation — makes no network calls.
+   */
   usdcToStroops(usdc: string): bigint {
     return this.toBaseUnit(usdc, 7);
   }
@@ -302,6 +415,13 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
   /**
    * Returns the current ledger sequence number from the network.
    * Used by the event poller to know where to start scanning.
+   *
+   * @returns The latest closed ledger's sequence number.
+   *
+   * @throws If the Soroban RPC call fails (network/5xx errors after the
+   * pool has exhausted all healthy endpoints).
+   *
+   * @remarks Hits Soroban RPC (`getLatestLedger`).
    */
   async getLatestLedger(): Promise<number> {
     const info = await this.rpcClient.getLatestLedger();
@@ -319,7 +439,12 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
    * so the search converges quickly (~7 iterations for a 17-day / ~1.5 M ledger
    * window at 5 s/ledger).
    *
-   * Returns the lowest ledger number the RPC can still serve, or 1 on failure.
+   * @returns The oldest ledger sequence number the connected RPC node can
+   * still serve via `getEvents`; `1` if the latest ledger cannot be fetched.
+   *
+   * @remarks Hits Soroban RPC (`getLatestLedger`, then repeated `getEvents`
+   * probes). Never throws — unexpected probe errors abort the search
+   * conservatively and return the best answer found so far.
    */
   async getOldestAvailableLedger(): Promise<number> {
     let latest: number;
@@ -364,7 +489,14 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Fetches metadata for a specific ledger sequence number via the Stellar RPC.
-   * Returns { sequence, closedAt, txCount, baseFee } or null if not found.
+   *
+   * @param sequence - The ledger sequence number to look up.
+   * @returns An object `{ sequence, closedAt, txCount, baseFee }` with
+   * snake/camel-case-tolerant field mapping, or `null` if the ledger is not
+   * found or the RPC call fails (errors are logged, not rethrown).
+   *
+   * @remarks Hits Soroban RPC (`getLedger`). Uses a lenient `any` cast on the
+   * RPC response because `getLedger` is not present in every SDK version.
    */
   async getLedger(sequence: number): Promise<{ sequence: number; closedAt: string; txCount: number; baseFee: number } | null> {
     try {
@@ -388,8 +520,18 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Fetches an account's XLM balance and trustlines via Horizon.
-   * Returns null if the account doesn't exist on-chain (unfunded address) —
-   * the caller is expected to translate that into a 404.
+   *
+   * @param address - The Stellar account (G...) address to look up.
+   * @returns The account's address, native XLM balance and non-native
+   * trustlines (`asset` formatted as `CODE:ISSUER`), or `null` if the
+   * account doesn't exist on-chain (unfunded address) — the caller is
+   * expected to translate that into a 404.
+   *
+   * @throws For any Horizon failure other than 404 (network/5xx after the
+   * pool has exhausted all healthy endpoints). The error is logged before
+   * being rethrown.
+   *
+   * @remarks Hits Horizon (`loadAccount`).
    */
   async getAccountInfo(address: string): Promise<{
     address: string;
@@ -436,6 +578,11 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
    * Distinct from /health (DB + Redis focused) — this is purely RPC-facing
    * and must never throw; a downstream RPC outage degrades to
    * `rpcHealthy: false` rather than surfacing a 500.
+   *
+   * @returns `{ latestLedger, networkPassphrase, rpcHealthy, rpcLatencyMs }`;
+   * `latestLedger` is `null` when the RPC health/ledger check fails.
+   *
+   * @remarks Hits Soroban RPC (`getHealth`, `getLatestLedger`). Never throws.
    */
   async getNetworkStatus(): Promise<{
     latestLedger: number | null;
@@ -475,6 +622,16 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
    * address, by reading its ledger-key-instance entry via getContractData.
    * getContractData rejects when the entry isn't found, which is how we
    * distinguish "no contract here" from a real RPC failure.
+   *
+   * @param contractAddress - The Soroban contract (C...) address to probe.
+   * @returns `true` if the contract's persistent instance entry exists;
+   * `false` if the RPC reports "not found" (no contract at that address).
+   *
+   * @throws For any RPC failure other than "not found" (network/5xx after
+   * the pool has exhausted all healthy endpoints). The error is logged
+   * before being rethrown.
+   *
+   * @remarks Hits Soroban RPC (`getContractData`).
    */
   async contractExists(contractAddress: string): Promise<boolean> {
     try {
@@ -503,8 +660,13 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
    *
    * @param startLedger - Ledger to begin scanning from
    * @param onEvent     - Called for each new event in order
-   * @param onError     - Called when the loop encounters an RPC error
+   * @param onError     - Called when the loop encounters an RPC error; the
+   * loop stops after the first reported error
    * @returns           - Unsubscribe function; call it to stop the loop
+   *
+   * @remarks Hits Soroban RPC (`getEvents`) once per second via
+   * {@link fetchContractEvents}. Returns synchronously — the polling loop
+   * runs in the background until unsubscribed or an error occurs.
    */
   subscribeToContractEvents(
     startLedger: number,
@@ -556,6 +718,17 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
    * This method never throws for known statuses — it always returns a typed object.
    *
    * @param txHash  64-character hex transaction hash
+   * @returns A typed status object with `hash`, `status`, `ledger`,
+   * `createdAt`, `feeCharged`, `resultCode`, `envelopeXdr`, `resultXdr` and
+   * decoded `events` (events are only populated for `SUCCESS` transactions
+   * of the configured contract; decoding failures degrade to `[]`).
+   *
+   * @throws If the Soroban RPC call itself fails (network/5xx after the
+   * pool has exhausted all healthy endpoints). The error is logged before
+   * being rethrown.
+   *
+   * @remarks Hits Soroban RPC (`getTransaction`, and `getTransaction` again
+   * via {@link getTransactionEvents} for `SUCCESS` transactions).
    */
   async getTransaction(txHash: string): Promise<{
     hash: string;
@@ -655,7 +828,20 @@ export class StellarService implements OnModuleInit, OnModuleDestroy {
   /**
    * Fetches the transaction's result meta from Soroban RPC and decodes
    * any events emitted by our contract.
-   * Throws NotFoundException if the transaction is not found.
+   *
+   * @param txHash - 64-character hex transaction hash.
+   * @returns Array of decoded contract events belonging to the configured
+   * contract, each shaped as
+   * `{ id, contractId, type, topic, value, ledger, txHash }`.
+   * Returns an empty array if the transaction is not `SUCCESS` or has no
+   * result meta / no matching contract events.
+   *
+   * @throws `NotFoundException` if the transaction is not found by the RPC.
+   * @throws For any other RPC or XDR-decoding failure; the error is logged
+   * before being rethrown.
+   *
+   * @remarks Hits Soroban RPC (`getTransaction`) and decodes the returned
+   * `resultMetaXdr` locally (no extra network calls).
    */
   async getTransactionEvents(txHash: string): Promise<any[]> {
     return withSpan(
