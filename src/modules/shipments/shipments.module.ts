@@ -12,11 +12,12 @@ import { CommentsController } from './comments.controller';
 import { CommentsService } from './comments.service';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 import { RedisModule } from '../../common/redis/redis.module';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [NotificationsModule, RedisModule, AuditLogsModule, AuthModule],
+  imports: [NotificationsModule, WebhooksModule, RedisModule, AuditLogsModule, AuthModule],
   controllers: [ShipmentsController, AdminShipmentsController, CommentsController],
   providers: [
     ShipmentsService,

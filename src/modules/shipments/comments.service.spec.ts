@@ -8,11 +8,15 @@ jest.mock("../notifications/notifications.service", () => ({
 jest.mock("../organizations/organizations.service", () => ({
   OrganizationsService: class OrganizationsService {},
 }));
+jest.mock("../webhooks/webhooks.service", () => ({
+  WebhooksService: class WebhooksService {},
+}));
 
 const BUYER = "G" + "B".repeat(55);
 const SUPPLIER = "G" + "S".repeat(55);
 const LOGISTICS = "G" + "L".repeat(55);
 const ARBITER = "G" + "A".repeat(55);
+const CREATED_AT = new Date("2026-10-20T10:00:00.000Z");
 
 const shipment = {
   id: "SHIP-1",
@@ -26,6 +30,7 @@ describe("CommentsService — threaded replies (#299)", () => {
   let service: CommentsService;
   let prisma: any;
   let notifications: any;
+  let webhooks: any;
 
   beforeEach(() => {
     prisma = {
@@ -38,7 +43,7 @@ describe("CommentsService — threaded replies (#299)", () => {
         create: jest
           .fn()
           .mockImplementation(({ data }) =>
-            Promise.resolve({ id: "reply-1", ...data }),
+            Promise.resolve({ id: "reply-1", createdAt: CREATED_AT, ...data }),
           ),
         update: jest.fn().mockResolvedValue({}),
       },
@@ -48,7 +53,15 @@ describe("CommentsService — threaded replies (#299)", () => {
       notifyUser: jest.fn().mockResolvedValue(undefined),
       notifyUserWithForcedEmail: jest.fn().mockResolvedValue(undefined),
     };
-    service = new CommentsService(prisma, notifications as any);
+    webhooks = {
+      dispatch: jest.fn().mockResolvedValue(undefined),
+    };
+    service = new CommentsService(
+      prisma,
+      notifications as any,
+      undefined,
+      webhooks as any,
+    );
   });
 
   it("stores parentCommentId when replying to a live comment on the same shipment", async () => {
@@ -247,5 +260,99 @@ describe("CommentsService — threaded replies (#299)", () => {
       replyCount: 1,
       deleted: true,
     });
+  });
+});
+
+describe("CommentsService — SHIPMENT_COMMENT_CREATED webhook (#537)", () => {
+  let service: CommentsService;
+  let prisma: any;
+  let notifications: any;
+  let webhooks: any;
+
+  beforeEach(() => {
+    prisma = {
+      shipment: { findUnique: jest.fn().mockResolvedValue(shipment) },
+      user: { findUnique: jest.fn().mockResolvedValue({ role: "USER" }) },
+      shipmentComment: {
+        findFirst: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: "comment-1", createdAt: CREATED_AT, ...data }),
+          ),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      $transaction: jest.fn((ops: Promise<any>[]) => Promise.all(ops)),
+    };
+    notifications = {
+      notifyUser: jest.fn().mockResolvedValue(undefined),
+      notifyUserWithForcedEmail: jest.fn().mockResolvedValue(undefined),
+    };
+    webhooks = {
+      dispatch: jest.fn().mockResolvedValue(undefined),
+    };
+    service = new CommentsService(
+      prisma,
+      notifications as any,
+      undefined,
+      webhooks as any,
+    );
+  });
+
+  it("dispatches SHIPMENT_COMMENT_CREATED once with the documented payload", async () => {
+    await service.create("SHIP-1", "user-1", BUYER, { body: "hello world" });
+
+    expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
+    expect(webhooks.dispatch).toHaveBeenCalledWith(
+      NotificationType.SHIPMENT_COMMENT_CREATED,
+      {
+        shipmentId: "SHIP-1",
+        commentId: "comment-1",
+        authorAddress: BUYER,
+        bodyExcerpt: "hello world",
+        createdAt: "2026-10-20T10:00:00.000Z",
+      },
+    );
+  });
+
+  it("truncates the body excerpt to 200 characters", async () => {
+    await service.create("SHIP-1", "user-1", BUYER, { body: "x".repeat(500) });
+
+    const payload = webhooks.dispatch.mock.calls[0][1];
+    expect(payload.bodyExcerpt).toHaveLength(200);
+    expect(payload.bodyExcerpt).toBe("x".repeat(200));
+  });
+
+  it("does not dispatch when comment creation is rejected", async () => {
+    const outsider = "G" + "O".repeat(55);
+
+    await expect(
+      service.create("SHIP-1", "outsider-1", outsider, { body: "hi" }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(webhooks.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("still creates the comment when webhook dispatch fails", async () => {
+    webhooks.dispatch.mockRejectedValue(new Error("endpoint down"));
+
+    const comment = await service.create("SHIP-1", "user-1", BUYER, {
+      body: "hello",
+    });
+
+    expect(comment.id).toBe("comment-1");
+    expect(prisma.shipmentComment.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("still creates the comment when no webhook service is wired", async () => {
+    const bare = new CommentsService(prisma, notifications as any);
+
+    const comment = await bare.create("SHIP-1", "user-1", BUYER, {
+      body: "hello",
+    });
+
+    expect(comment.id).toBe("comment-1");
   });
 });
