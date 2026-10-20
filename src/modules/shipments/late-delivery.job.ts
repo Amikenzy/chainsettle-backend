@@ -8,7 +8,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 
 import { runTrackedJob } from '../../common/jobs/job-tracker.util';
 
-const LATE_DELIVERY_LOCK_KEY = 'chainsettle:late-delivery:lock';
+import { JOB_LOCK_KEYS } from '../../common/jobs/job-locks';
+
+const LATE_DELIVERY_LOCK_KEY = JOB_LOCK_KEYS['late-delivery'];
 const LATE_DELIVERY_LOCK_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 /**

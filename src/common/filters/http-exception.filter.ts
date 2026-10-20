@@ -37,6 +37,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
   constructor(private readonly i18n: I18nService) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
+    // GraphQL has no HTTP response to write to here — hand the error back so
+    // Apollo formats it (keeps extensions like code: 'TOO_MANY_REQUESTS').
+    if (host.getType?.<string>() === 'graphql') {
+      return exception;
+    }
+
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();

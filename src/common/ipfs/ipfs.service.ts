@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   OnModuleInit,
   ServiceUnavailableException,
+  UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
@@ -12,6 +13,7 @@ import axios from 'axios';
 import * as FormData from 'form-data';
 import { RedisService } from '../redis/redis.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { mimeTypesMatch, normalizeMimeType, sniffMimeType } from './file-signature.util';
 
 export interface IpfsUploadLimits {
   maxSizeBytes: number;
@@ -123,6 +125,8 @@ export class IpfsService implements OnModuleInit {
    * @param originalName - Original filename (for Pinata metadata)
    * @param mimeType    - MIME type of the file
    * @returns The IPFS CID (v1, base32 encoded)
+   * @throws UnsupportedMediaTypeException when the file content does not match
+   *         an allowed type or the declared MIME type
    * @throws ServiceUnavailableException when IPFS node is unreachable
    * @throws InternalServerErrorException on upload failure
    */
@@ -144,6 +148,8 @@ export class IpfsService implements OnModuleInit {
         `Unsupported file type: ${mimeType}. Allowed types: ${limits.allowedMimeTypes.join(', ')}`,
       );
     }
+
+    this.assertContentMatchesType(fileBuffer, mimeType, limits.allowedMimeTypes);
 
     const hash = createHash('sha256').update(fileBuffer).digest('hex');
     const dedupKey = `ipfs:dedup:${hash}`;
@@ -232,6 +238,42 @@ export class IpfsService implements OnModuleInit {
 
     const finalDetail = (lastError as any)?.response?.data?.error?.details ?? lastError?.message ?? 'unknown error';
     throw new InternalServerErrorException(`IPFS upload failed: ${finalDetail}`);
+  }
+
+  /**
+   * Validates the file by its content (magic bytes) rather than the
+   * client-supplied Content-Type, before anything is pinned. Rejects with 415
+   * when the content is unrecognised, not an allowed type, or doesn't match
+   * the declared type (e.g. an executable renamed to invoice.pdf).
+   */
+  private assertContentMatchesType(
+    fileBuffer: Buffer,
+    declaredMimeType: string,
+    allowedMimeTypes: string[],
+  ): void {
+    const sniffed = sniffMimeType(fileBuffer);
+
+    if (!sniffed) {
+      this.logger.warn(`Rejected upload declared as ${declaredMimeType}: content type not recognised`);
+      throw new UnsupportedMediaTypeException(
+        `File content could not be identified as an allowed type. Allowed types: ${allowedMimeTypes.join(', ')}`,
+      );
+    }
+
+    const allowed = allowedMimeTypes.map(normalizeMimeType);
+    if (!allowed.includes(normalizeMimeType(sniffed))) {
+      this.logger.warn(`Rejected upload declared as ${declaredMimeType}: content is ${sniffed}`);
+      throw new UnsupportedMediaTypeException(
+        `File content is ${sniffed}, which is not allowed. Allowed types: ${allowedMimeTypes.join(', ')}`,
+      );
+    }
+
+    if (!mimeTypesMatch(declaredMimeType, sniffed)) {
+      this.logger.warn(`Rejected upload declared as ${declaredMimeType}: content is ${sniffed}`);
+      throw new UnsupportedMediaTypeException(
+        `File content (${sniffed}) does not match the declared type (${declaredMimeType})`,
+      );
+    }
   }
 
   /**

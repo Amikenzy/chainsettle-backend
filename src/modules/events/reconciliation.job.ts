@@ -6,8 +6,13 @@ import { ShipmentsService } from '../shipments/shipments.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RedisService } from '../../common/redis/redis.service';
 import { runTrackedJob } from '../../common/jobs/job-tracker.util';
+import { JOB_LOCK_KEYS } from '../../common/jobs/job-locks';
 import { ShipmentStatus, NotificationType, UserRole } from '@prisma/client';
 import { nativeToScVal } from '@stellar/stellar-sdk';
+import { randomUUID } from 'crypto';
+
+const RECONCILIATION_LOCK_KEY = JOB_LOCK_KEYS.reconciliation;
+const RECONCILIATION_LOCK_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 @Injectable()
 export class ReconciliationJob {
@@ -126,7 +131,26 @@ export class ReconciliationJob {
   };
 
   if (this.redis) {
-    await runTrackedJob(this.redis, 'reconciliation', execute, this.logger);
+    const redis = this.redis;
+    await runTrackedJob(
+      redis,
+      'reconciliation',
+      async () => {
+        // The lock keeps a manual admin-triggered run from overlapping a
+        // scheduled one (and vice versa) across all instances.
+        const token = randomUUID();
+        if (!(await redis.acquireLock(RECONCILIATION_LOCK_KEY, token, RECONCILIATION_LOCK_TTL_MS))) {
+          this.logger.debug('Skipping reconciliation — another run holds the lock');
+          return;
+        }
+        try {
+          await execute();
+        } finally {
+          await redis.releaseLock(RECONCILIATION_LOCK_KEY, token);
+        }
+      },
+      this.logger,
+    );
   } else {
     await execute();
   }

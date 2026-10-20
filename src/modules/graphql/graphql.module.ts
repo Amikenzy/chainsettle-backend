@@ -77,9 +77,11 @@ async function authenticateConnection(
               },
             },
           },
-          context: ({ req, extra }: any) => ({
+          context: ({ req, res, extra }: any) => ({
             // WebSocket connections carry the user authenticated in onConnect.
             req: req ?? { user: extra?.user, headers: {} },
+            // Exposed so GqlThrottlerGuard can set X-RateLimit-* headers.
+            res,
             loaders: createLoaders(prisma),
           }),
         };
