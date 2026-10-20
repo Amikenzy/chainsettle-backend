@@ -91,6 +91,23 @@ commit body or PR description when relevant.
 
 ---
 
+## Pre-commit Hooks
+
+[husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/lint-staged/lint-staged)
+run automatically on every commit. They are installed by the `prepare` script when you run
+`npm install` — no extra setup needed.
+
+On `git commit`, every staged `.ts` file is run through:
+
+1. `eslint --fix` — auto-fixes what it can; remaining lint **errors block the commit**.
+2. `prettier --write` — reformats the file (config in `.prettierrc`).
+
+Fixed files are re-staged automatically, so the commit contains the formatted version.
+If the hook blocks your commit, fix the reported errors and commit again. To bypass it in
+an emergency, use `git commit --no-verify` — CI and reviewers will still catch the issues.
+
+---
+
 ## Before Opening a PR
 
 Run these locally and make sure they pass:
