@@ -19,6 +19,8 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "dev:mock-chain": "ts-node test/mocks/stellar-rpc-server.ts",
+    "prepare": "husky || true",
     "format": "prettier --write \"src/**/*.ts\"",
     "loadtest": "bash load-tests/run-all.sh",
     "check:sdk": "node scripts/check-sdk.js",
@@ -95,7 +97,9 @@
     "eslint": "^8.42.0",
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-prettier": "^5.0.0",
+    "husky": "^9.1.7",
     "jest": "^29.5.0",
+    "lint-staged": "^15.2.10",
     "openapi-typescript": "^7.4.0",
     "prettier": "^3.0.0",
     "prisma": "^5.6.0",
@@ -121,6 +125,25 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "json-summary"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "statements": 40,
+        "branches": 25,
+        "functions": 30,
+        "lines": 40
+      }
+    },
     "testEnvironment": "node"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ]
   }
 }

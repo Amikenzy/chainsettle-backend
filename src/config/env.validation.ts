@@ -12,12 +12,37 @@ const cronExpression = Joi.string()
   })
   .messages({ 'any.invalid': '{{#label}} must be a valid cron expression' });
 
+const jsonObjectString = Joi.string()
+  .custom((value: string, helpers) => {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return helpers.error('any.invalid');
+      }
+      return value;
+    } catch (_err) {
+      return helpers.error('any.invalid');
+    }
+  })
+  .messages({ 'any.invalid': '{{#label}} must be a JSON object string' });
+
 export const envValidationSchema = Joi.object({
   // Server
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
   PORT: Joi.number().integer().min(1).max(65535).default(3000),
   // Route prefix without version segment (versioning adds /v1, /v2). Legacy "api/v1" is accepted.
   API_PREFIX: Joi.string().default('api'),
+
+  // Logging — winston npm levels. When unset, defaults to 'info' in production and 'debug' otherwise.
+  LOG_LEVEL: Joi.string()
+    .valid('error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly')
+    .optional(),
+
+  // OpenTelemetry tracing — fully disabled when OTEL_EXPORTER_OTLP_ENDPOINT is unset or empty.
+  OTEL_EXPORTER_OTLP_ENDPOINT: Joi.string().uri({ scheme: ['http', 'https'] }).allow('').optional(),
+  // JSON object of extra OTLP request headers, e.g. {"x-honeycomb-team":"KEY"}
+  OTEL_EXPORTER_OTLP_HEADERS: jsonObjectString.allow('').optional(),
+  OTEL_SERVICE_NAME: Joi.string().optional(),
 
   // JWT
   JWT_SECRET: Joi.string().required(),
