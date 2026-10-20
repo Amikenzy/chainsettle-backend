@@ -47,6 +47,7 @@ GET /api/v1/webhooks/event-types
 | `ARBITER_DECLINED` | The arbiter declines their assignment |
 | `TRACKING_UPDATED` | Logistics submits a tracking update |
 | `PROOF_REJECTED` | Buyer rejects a submitted proof |
+| `SHIPMENT_COMMENT_CREATED` | A comment is created on a shipment — dispatched once per comment to integrations, regardless of participants' notification preferences |
 
 ---
 
@@ -81,6 +82,12 @@ The `payload` object mirrors the `data` field of the corresponding `Notification
 | `SHIPMENT_CANCELLED` | `shipmentId` |
 | `TRACKING_UPDATED` | `shipmentId`, `status`, `location`, `estimatedArrival` |
 | `PROOF_REJECTED` | `shipmentId`, `milestoneIndex`, `reason` |
+| `SHIPMENT_COMMENT_CREATED` | `shipmentId`, `commentId`, `authorAddress`, `bodyExcerpt`, `createdAt` |
+
+> `SHIPMENT_COMMENT_CREATED` is dispatched directly by the comments service
+> (not via a `Notification` record), so its payload has no `notificationId`.
+> `bodyExcerpt` is the first 200 characters of the comment body and
+> `createdAt` is an ISO-8601 timestamp.
 
 ---
 

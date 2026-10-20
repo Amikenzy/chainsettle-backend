@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `SHIPMENT_COMMENT_CREATED` webhook event, dispatched once per comment created on a shipment with payload `shipmentId`, `commentId`, `authorAddress`, `bodyExcerpt` (first 200 chars) and `createdAt`; subscribable via `POST /webhooks` and listed in `GET /webhooks/event-types` (#537).
 - CHANGELOG.md now tracks API changes for frontend and webhook integrators.
 - `?fields=` sparse fieldsets on `GET /shipments` and `GET /shipments/:id`; `id` is always returned and unknown fields return 400 with the valid options (#390).
 - `GET /users/:stellarAddress/performance` — on-time milestone rate, dispute rate, proof-to-confirm hours and completed USD volume, with `?role=SUPPLIER|LOGISTICS` and `?since=`; cached for 1 hour, volume visible only to counterparties (#391).

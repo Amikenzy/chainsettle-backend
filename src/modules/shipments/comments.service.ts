@@ -10,11 +10,15 @@ import {
 import { CommentVisibility, NotificationType } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { OrganizationsService } from '../organizations/organizations.service';
 
 /** Maximum number of pinned comments allowed per shipment */
 const MAX_PINNED_COMMENTS = 3;
+
+/** Maximum comment body characters included in the SHIPMENT_COMMENT_CREATED webhook payload. */
+const COMMENT_EXCERPT_LENGTH = 200;
 
 /**
  * Stellar address regex — G followed by exactly 55 uppercase alphanumeric chars.
@@ -30,6 +34,7 @@ export class CommentsService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     @Optional() private readonly organizations?: OrganizationsService,
+    @Optional() private readonly webhooks?: WebhooksService,
   ) {}
 
   // ----------------------------------------------------------
@@ -96,6 +101,24 @@ export class CommentsService {
     });
 
     this.logger.log(`Comment created on shipment ${shipmentId} by ${authorAddress}`);
+
+    // Webhook for external integrations (ERPs, chat bridges) — dispatched once
+    // per comment, independent of participants' notification preferences.
+    // Fire-and-forget: a webhook failure must not fail comment creation.
+    this.webhooks
+      ?.dispatch(NotificationType.SHIPMENT_COMMENT_CREATED, {
+        shipmentId,
+        commentId: comment.id,
+        authorAddress,
+        bodyExcerpt: comment.body.slice(0, COMMENT_EXCERPT_LENGTH),
+        createdAt: comment.createdAt.toISOString(),
+      })
+      .catch((err) =>
+        this.logger.error(
+          `Webhook dispatch error for SHIPMENT_COMMENT_CREATED (comment ${comment.id})`,
+          err.message,
+        ),
+      );
 
     // Notify all participants who can see this comment
     await this.notifyParticipants(shipment, comment, authorAddress);
