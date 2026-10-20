@@ -14,6 +14,8 @@ import {
   SHIPMENTS_BY_STATUS_GAUGE,
   OPEN_DISPUTES_GAUGE,
   DISPUTE_RESOLUTION_TIME_HISTOGRAM,
+  JOB_DURATION_HISTOGRAM,
+  JOB_RUNS_COUNTER,
 } from './metrics.service';
 import { resolveBuildInfo } from '../build-info';
 
@@ -83,6 +85,17 @@ export async function collectOpenDisputes(this: Gauge<string>, prisma: PrismaSer
       collect: collectOpenDisputes,
     }),
     makeHistogramProvider({ name: DISPUTE_RESOLUTION_TIME_HISTOGRAM, help: 'Time taken to resolve disputes in hours', buckets: [1, 6, 12, 24, 48, 72, 168, 336] }),
+    makeHistogramProvider({
+      name: JOB_DURATION_HISTOGRAM,
+      help: 'Duration of cron job executions in seconds',
+      labelNames: ['job'],
+      buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 300],
+    }),
+    makeCounterProvider({
+      name: JOB_RUNS_COUNTER,
+      help: 'Total number of cron job executions',
+      labelNames: ['job', 'result'],
+    }),
     makeGaugeProvider({
       name: SHIPMENTS_BY_STATUS_GAUGE,
       help: 'Current number of shipments in each status',

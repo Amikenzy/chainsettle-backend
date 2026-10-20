@@ -6,11 +6,14 @@ import { TokenRegistryService } from "../../common/token-registry/token-registry
 import { FxRateService } from "../../common/fx/fx-rate.service";
 import { VolumeReportQueryDto } from "./dto/volume-report-query.dto";
 import { ScheduledJobDto } from "./dto/scheduled-job.dto";
+import { UserExportQueryDto } from "./dto/user-export-query.dto";
 import { buildCsvFromRows } from "../../common/utils/csv.util";
 import {
   getJobRedisKey,
   JobRunRecord,
 } from "../../common/jobs/job-tracker.util";
+import { AuditLogService } from "../audit-logs/audit-log.service";
+import { Request, Response } from "express";
 
 export interface DashboardSnapshot {
   /** ISO-8601 timestamp of when this snapshot was taken */
@@ -43,6 +46,7 @@ export class AdminDashboardService {
     private readonly tokenRegistry: TokenRegistryService,
     private readonly fxRate: FxRateService,
     private readonly schedulerRegistry: SchedulerRegistry,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   async getSnapshot(): Promise<DashboardSnapshot> {
@@ -345,5 +349,128 @@ export class AdminDashboardService {
     }
 
     return jobs.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Export users to CSV with streaming to handle large datasets.
+   * Logs the export action for audit purposes.
+   */
+  async exportUsers(
+    query: UserExportQueryDto,
+    res: Response,
+    req: Request,
+  ): Promise<void> {
+    // Build the where clause from filters
+    const where: any = {};
+
+    if (query.role) {
+      where.role = query.role;
+    }
+
+    if (query.emailVerified !== undefined) {
+      where.emailVerified = query.emailVerified;
+    }
+
+    if (query.kycStatus) {
+      where.kycStatus = query.kycStatus;
+    }
+
+    if (query.deactivated !== undefined) {
+      if (query.deactivated) {
+        where.deactivatedAt = { not: null };
+      } else {
+        where.deactivatedAt = null;
+      }
+    }
+
+    if (query.search) {
+      where.OR = [
+        { email: { contains: query.search, mode: 'insensitive' } },
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { stellarAddress: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    // Log the export for audit
+    const actor = (req as any).user;
+    await this.auditLog.record({
+      actorId: actor?.id,
+      actorAddress: actor?.stellarAddress ?? 'SYSTEM',
+      action: 'users.exported',
+      resourceType: 'User',
+      resourceId: 'bulk-export',
+      metadata: {
+        filters: {
+          role: query.role,
+          emailVerified: query.emailVerified,
+          kycStatus: query.kycStatus,
+          deactivated: query.deactivated,
+          search: query.search,
+        },
+      },
+      ipAddress: req.ip,
+    });
+
+    // Write CSV header
+    const headers = ['id', 'stellarAddress', 'email', 'name', 'role', 'kycStatus', 'emailVerified', 'deactivatedAt', 'createdAt'];
+    res.write(headers.join(',') + '\n');
+
+    // Stream users in batches using cursor-based pagination
+    const BATCH_SIZE = 1000;
+    let cursor: string | undefined = undefined;
+    let hasMore = true;
+
+    while (hasMore) {
+      const batch = await this.prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          stellarAddress: true,
+          email: true,
+          name: true,
+          role: true,
+          kycStatus: true,
+          emailVerified: true,
+          deactivatedAt: true,
+          createdAt: true,
+        },
+        take: BATCH_SIZE,
+        skip: cursor ? 1 : 0,
+        cursor: cursor ? { id: cursor } : undefined,
+        orderBy: { createdAt: 'asc' },
+      });
+
+      if (batch.length < BATCH_SIZE) {
+        hasMore = false;
+      } else {
+        cursor = batch[batch.length - 1].id;
+      }
+
+      // Convert to CSV rows and write
+      for (const user of batch) {
+        const row = [
+          user.id,
+          user.stellarAddress,
+          user.email ?? '',
+          user.name ?? '',
+          user.role,
+          user.kycStatus,
+          user.emailVerified,
+          user.deactivatedAt ? user.deactivatedAt.toISOString() : '',
+          user.createdAt.toISOString(),
+        ];
+        // Escape values (quotes, commas, newlines)
+        const escapedRow = row.map((value) => {
+          const str = String(value);
+          if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+            return `"${str.replace(/"/g, '""')}"`;
+          }
+          return str;
+        });
+        res.write(escapedRow.join(',') + '\n');
+      }
+    }
+
+    res.end();
   }
 }

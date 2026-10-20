@@ -7,6 +7,7 @@ import {
   Query,
   Res,
   MessageEvent,
+  Req,
 } from "@nestjs/common";
 import {
   ApiTags,
@@ -17,12 +18,13 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { UserRole } from "@prisma/client";
 import { Observable } from "rxjs";
-import { Response } from "express";
+import { Response, Request } from "express";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { AdminDashboardService } from "./admin-dashboard.service";
 import { VolumeReportQueryDto } from "./dto/volume-report-query.dto";
 import { ScheduledJobDto } from "./dto/scheduled-job.dto";
+import { UserExportQueryDto } from "./dto/user-export-query.dto";
 
 @ApiTags("admin")
 @ApiBearerAuth()
@@ -144,5 +146,44 @@ export class AdminDashboardController {
   @ApiResponse({ status: 403, description: "Admin access required" })
   async getScheduledJobs(): Promise<ScheduledJobDto[]> {
     return this.dashboard.getScheduledJobs();
+  }
+
+  /**
+   * GET /api/v1/admin/users/export
+   *
+   * Exports users to CSV for compliance and reporting.
+   * Supports the same filters as the admin user list.
+   * Streams the response to handle large datasets without memory issues.
+   */
+  @Get("users/export")
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: "[Admin] Export users to CSV",
+    description:
+      "Exports all users matching the given filters to a CSV file. " +
+      "Supports streaming for large datasets. Columns: id, stellarAddress, email, name, role, kycStatus, emailVerified, deactivatedAt, createdAt.",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "CSV file download",
+    schema: {
+      type: 'string',
+      format: 'binary',
+    },
+  })
+  @ApiResponse({ status: 401, description: "Unauthorized" })
+  @ApiResponse({ status: 403, description: "Admin access required" })
+  async exportUsers(
+    @Query() query: UserExportQueryDto,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `users-export-${timestamp}.csv`;
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    await this.dashboard.exportUsers(query, res, req);
   }
 }

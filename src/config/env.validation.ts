@@ -155,6 +155,10 @@ export const envValidationSchema = Joi.object({
   // Defaults to the cache TTL window (5 minutes). Stale rates are still served
   // but the response includes `stale: true` so clients can warn users.
   FX_STALE_AFTER_MINUTES: Joi.number().integer().min(1).default(10),
+
+  // Request timeout for handlers - returns 503 after timeout
+  // Use @Timeout decorator to override for specific routes (exports, imports)
+  REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(600000).default(30000),
 })
   .or('STELLAR_RPC_URL', 'STELLAR_RPC_URLS')
   .or('STELLAR_HORIZON_URL', 'STELLAR_HORIZON_URLS')

@@ -23,6 +23,8 @@ Defined in `src/common/metrics/metrics.service.ts` and registered in
 | `chainsettle_shipments_created_total` | Counter | — | Shipments registered via the API |
 | `chainsettle_active_shipments` | Gauge | — | Current count of ACTIVE shipments |
 | `chainsettle_http_request_duration_seconds` | Histogram | `method`, `route`, `status` | Per-route HTTP latency (buckets: 5 ms → 5 s) |
+| `chainsettle_job_duration_seconds` | Histogram | `job` | Duration of cron job executions (buckets: 100 ms → 5 min) |
+| `chainsettle_job_runs_total` | Counter | `job`, `result` | Total cron job executions (`success`, `failure`, `skipped`) |
 
 ### Dead-letter queue (DLQ)
 
@@ -55,6 +57,8 @@ API prefix.
 | Events processed/s | `rate(chainsettle_events_processed_total[1m])` |
 | Event failures | `increase(chainsettle_events_failed_total[5m])` |
 | Active shipments | `chainsettle_active_shipments` |
+| Job success rate | `sum by (job, result) (rate(chainsettle_job_runs_total[5m]))` |
+| Job duration p95 | `histogram_quantile(0.95, sum by (le, job) (rate(chainsettle_job_duration_seconds_bucket[5m])))` |
 
 ---
 
@@ -162,6 +166,31 @@ or Loki):
 
 Every log line written through NestJS's `Logger` or the Winston logger automatically includes
 `timestamp` and the logger context (class name).
+
+### Request timeouts
+
+Requests that hang (slow RPC, stuck DB) are handled by `TimeoutInterceptor`. The default
+timeout is 30 seconds (configurable via `REQUEST_TIMEOUT_MS`). Long-running routes like
+exports can opt into a longer timeout using the `@Timeout()` decorator.
+
+When a request times out, the client receives a 503 Service Unavailable response:
+
+```json
+{
+  "statusCode": 503,
+  "message": "Request timeout - the server took too long to respond",
+  "error": "Service Unavailable"
+}
+```
+
+The timeout interceptor is registered globally in `app.module.ts`. Use the `@Timeout(ms)`
+decorator on specific routes to override:
+
+```ts
+@Timeout(300000) // 5 minute timeout for exports
+@Get('export/users')
+async exportUsers() { ... }
+```
 
 ### Request ID in logs
 

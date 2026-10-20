@@ -16,6 +16,8 @@ import { TokenRegistryModule } from './common/token-registry/token-registry.modu
 import { RedisThrottlerStorageService } from './common/throttler/redis-throttler-storage.service';
 import { MetricsModule } from './common/metrics/metrics.module';
 import { HttpMetricsInterceptor } from './common/interceptors/http-metrics.interceptor';
+import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
+import { TimeoutGuard } from './common/guards/timeout.guard';
 import { FxModule } from './common/fx/fx.module';
 
 import { AuthModule } from './modules/auth/auth.module';
@@ -108,6 +110,11 @@ import { SettlementProposalsModule } from './modules/milestones/settlement-propo
       provide: APP_GUARD,
       useClass: RateLimitThrottlerGuard,
     },
+    // Apply TimeoutGuard to read @Timeout() decorator metadata
+    {
+      provide: APP_GUARD,
+      useClass: TimeoutGuard,
+    },
     // Apply global roles guard — enforces @Roles() decorator across all routes
     {
       provide: APP_GUARD,
@@ -133,6 +140,12 @@ import { SettlementProposalsModule } from './modules/milestones/settlement-propo
       provide: APP_INTERCEPTOR,
       useClass: HttpMetricsInterceptor,
     },
+    // Timeout requests that hang (slow RPC, stuck DB)
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: TimeoutInterceptor,
+    },
+    TimeoutGuard,
     {
       provide: APP_FILTER,
       useClass: HttpExceptionFilter,

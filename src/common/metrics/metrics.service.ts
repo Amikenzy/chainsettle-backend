@@ -11,6 +11,11 @@ export const SHIPMENTS_BY_STATUS_GAUGE = 'chainsettle_shipments_by_status';
 export const OPEN_DISPUTES_GAUGE = 'chainsettle_open_disputes';
 export const DISPUTE_RESOLUTION_TIME_HISTOGRAM = 'chainsettle_dispute_resolution_time_hours';
 
+/** Cron job duration histogram - labels: job */
+export const JOB_DURATION_HISTOGRAM = 'chainsettle_job_duration_seconds';
+/** Cron job runs counter - labels: job, result (success|failure|skipped) */
+export const JOB_RUNS_COUNTER = 'chainsettle_job_runs_total';
+
 @Injectable()
 export class MetricsService {
   constructor(
@@ -26,7 +31,22 @@ export class MetricsService {
     private readonly stellarEndpoint: Gauge<string>,
     @InjectMetric(OPEN_DISPUTES_GAUGE) private readonly openDisputes: Gauge<string>,
     @InjectMetric(DISPUTE_RESOLUTION_TIME_HISTOGRAM) private readonly disputeResolutionTime: Histogram<string>,
+    @InjectMetric(JOB_DURATION_HISTOGRAM)
+    private readonly jobDuration: Histogram<string>,
+    @InjectMetric(JOB_RUNS_COUNTER)
+    private readonly jobRuns: Counter<string>,
   ) {}
+
+  /**
+   * Records a cron job execution with duration and result.
+   * @param jobName - The name of the cron job
+   * @param durationMs - Duration in milliseconds
+   * @param result - 'success', 'failure', or 'skipped'
+   */
+  recordJobRun(jobName: string, durationMs: number, result: 'success' | 'failure' | 'skipped'): void {
+    this.jobDuration.observe({ job: jobName }, durationMs / 1000);
+    this.jobRuns.inc({ job: jobName, result });
+  }
 
   /** 1 = healthy, 0 = unhealthy; `active` label marks the endpoint currently in use. */
   setStellarEndpointHealth(type: string, url: string, healthy: boolean, active: boolean): void {
