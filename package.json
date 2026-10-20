@@ -15,6 +15,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint:check": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
@@ -24,7 +25,9 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "loadtest": "bash load-tests/run-all.sh",
     "check:sdk": "node scripts/check-sdk.js",
-    "generate:sdk": "node scripts/generate-sdk.js"
+    "generate:sdk": "node scripts/generate-sdk.js",
+    "dev:up": "docker compose up -d",
+    "dev:down": "docker compose down"
   },
   "dependencies": {
     "@apollo/server": "^4.0.0",
@@ -80,6 +83,7 @@
     "winston": "^3.19.0"
   },
   "devDependencies": {
+    "@babel/types": "^7.29.8",
     "@nestjs/cli": "^10.0.0",
     "@nestjs/schematics": "^10.0.0",
     "@nestjs/testing": "^10.0.0",
