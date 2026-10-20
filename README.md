@@ -229,7 +229,9 @@ chainsetttle-backend/
 
 - **Node.js** v20+
 - **pnpm** (recommended) or npm
-- **PostgreSQL** 15+
+- **Docker** and **Docker Compose** (recommended for PostgreSQL and Redis)
+- **PostgreSQL** 15+ (or use docker-compose)
+- **Redis** 7+ (or use docker-compose)
 - **Stellar CLI** (only needed if deploying the contract)
 
 ---
@@ -244,19 +246,35 @@ npm install
 pnpm install
 ```
 
-### 2. Set up environment variables
+### 2. Set up PostgreSQL and Redis
+
+**Option A: Docker Compose (recommended)**
+
+```bash
+# Start PostgreSQL and Redis in the background
+npm run dev:up
+
+# When done, stop the services
+npm run dev:down
+```
+
+**Option B: Manual setup**
+
+Install PostgreSQL 15+ and Redis 7+ on your machine and ensure they are running.
+
+### 3. Set up environment variables
 
 ```bash
 cp .env.example .env
 ```
 
 Edit `.env` with your values:
-- `DATABASE_URL` — your PostgreSQL connection string
+- `DATABASE_URL` — your PostgreSQL connection string (defaults work with docker-compose)
 - `JWT_SECRET` — a long random string
 - `CHAINSETTTLE_CONTRACT_ID` — the deployed contract ID from `chainsetttle-contract`
 - `SMTP_*` — email credentials (use Gmail app password or any SMTP)
 
-### 3. Set up the database
+### 4. Set up the database
 
 ```bash
 # Create and apply migrations
