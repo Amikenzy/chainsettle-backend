@@ -7,7 +7,9 @@ import { RedisService } from '../../common/redis/redis.service';
 
 import { runTrackedJob } from '../../common/jobs/job-tracker.util';
 
-const CLEANUP_LOCK_KEY = 'chainsettle:notification-cleanup:lock';
+import { JOB_LOCK_KEYS } from '../../common/jobs/job-locks';
+
+const CLEANUP_LOCK_KEY = JOB_LOCK_KEYS['notification-cleanup'];
 const CLEANUP_LOCK_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const BATCH_SIZE = 5_000;
 const UNREAD_ARCHIVE_DAYS = 365;

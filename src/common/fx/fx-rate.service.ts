@@ -3,10 +3,20 @@ import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { RedisService } from '../redis/redis.service';
 import { TokenRegistryService } from '../token-registry/token-registry.service';
+import {
+  CircuitBreaker,
+  CircuitBreakerSnapshot,
+  CircuitOpenError,
+} from '../utils/circuit-breaker';
 
 export interface FxRate {
   rate: number; // token → USD
   asOf: string; // ISO-8601 timestamp of when the rate was fetched
+  /**
+   * Set when the rate is served from the last-known-good copy (the fresh
+   * cache entry expired) or while the provider circuit breaker is open.
+   */
+  stale?: boolean;
 }
 
 /**
@@ -71,6 +81,11 @@ const CURRENCY_PRECISION_MAP: Record<string, number> = {
  * Caches token/USD rates in Redis so shipment/milestone responses can show
  * an estimated USD value alongside raw token amounts. Rates are refreshed
  * on a schedule (see FxRateJob) rather than fetched per-request.
+ *
+ * Provider calls go through a circuit breaker: after
+ * FX_BREAKER_FAILURE_THRESHOLD consecutive failures the provider is skipped
+ * for FX_BREAKER_COOLDOWN_SECONDS, and the last successfully fetched rate is
+ * served with `stale: true` instead of waiting on a timeout every call.
  */
 @Injectable()
 export class FxRateService {
@@ -78,6 +93,7 @@ export class FxRateService {
   private readonly cacheTtlSeconds: number;
   private readonly apiUrl?: string;
   private readonly staleAfterMs: number;
+  private readonly breaker: CircuitBreaker;
 
   constructor(
     private readonly config: ConfigService,
@@ -88,6 +104,10 @@ export class FxRateService {
     this.apiUrl = this.config.get<string>('FX_RATE_API_URL') || undefined;
     const staleAfterMinutes = this.config.get<number>('FX_STALE_AFTER_MINUTES', 10);
     this.staleAfterMs = staleAfterMinutes * 60 * 1000;
+    this.breaker = new CircuitBreaker('fx-provider', {
+      failureThreshold: Number(this.config.get<number>('FX_BREAKER_FAILURE_THRESHOLD', 5)),
+      cooldownMs: Number(this.config.get<number>('FX_BREAKER_COOLDOWN_SECONDS', 60)) * 1000,
+    });
   }
 
   private cacheKey(symbol: string): string {
@@ -100,15 +120,66 @@ export class FxRateService {
   }
 
   /**
+   * Last successfully fetched value for a cache key, stored without a TTL so
+   * it outlives the fresh entry while the provider is unavailable.
+   */
+  private lastKnownKey(cacheKey: string): string {
+    return `${cacheKey}:last`;
+  }
+
+  /** Circuit breaker state for the FX provider (exposed in /health/detailed). */
+  getBreakerState(): CircuitBreakerSnapshot {
+    return this.breaker.getSnapshot();
+  }
+
+  /**
+   * Reads the fresh cached rate, falling back to the last-known-good copy
+   * when the fresh entry has expired. Fallback values, and any value read
+   * while the breaker is open, are marked `stale: true`.
+   */
+  private async readCachedRate(cacheKey: string): Promise<FxRate | null> {
+    const fresh = await this.redis.getJson<FxRate>(cacheKey);
+    if (fresh) {
+      return this.breaker.isOpen() ? { ...fresh, stale: true } : fresh;
+    }
+    const lastKnown = await this.redis.getJson<FxRate>(this.lastKnownKey(cacheKey));
+    return lastKnown ? { ...lastKnown, stale: true } : null;
+  }
+
+  /** Writes a freshly fetched rate to both the TTL'd cache and the last-known copy. */
+  private async storeRate(cacheKey: string, rate: number): Promise<void> {
+    const value: FxRate = { rate, asOf: new Date().toISOString() };
+    await Promise.all([
+      this.redis.setJson(cacheKey, value, this.cacheTtlSeconds),
+      this.redis.setJson(this.lastKnownKey(cacheKey), value),
+    ]);
+  }
+
+  /**
+   * Calls the FX provider through the circuit breaker. Invalid payloads count
+   * as failures. Throws CircuitOpenError without calling out while open.
+   */
+  private async fetchRate(params: Record<string, string>, label: string): Promise<number> {
+    return this.breaker.exec(async () => {
+      const res = await axios.get(this.apiUrl!, { params, timeout: 5_000 });
+      const rate = Number(res.data?.rate);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        throw new Error(`Invalid rate payload for ${label}: ${JSON.stringify(res.data)}`);
+      }
+      return rate;
+    });
+  }
+
+  /**
    * Reads the cached USD→fiat rate for `currency`.
    * Returns 1 when currency is USD (no conversion needed).
    * Returns null when no rate has been fetched yet.
    */
-  async getFiatRate(currency: string): Promise<{ rate: number; asOf: string } | null> {
+  async getFiatRate(currency: string): Promise<FxRate | null> {
     const upper = currency.toUpperCase();
     if (upper === 'USD') return { rate: 1, asOf: new Date().toISOString() };
     try {
-      return await this.redis.getJson<{ rate: number; asOf: string }>(this.fiatCacheKey(upper));
+      return await this.readCachedRate(this.fiatCacheKey(upper));
     } catch (err: any) {
       this.logger.warn(`Fiat rate cache read failed for ${upper}: ${err.message}`);
       return null;
@@ -142,6 +213,7 @@ export class FxRateService {
     rate: number;      // effective token → targetCurrency rate
     asOf: string;
     precision: number;
+    stale?: boolean;   // present (true) when either rate is stale
   } | null> {
     const upper = targetCurrency.toUpperCase();
 
@@ -166,7 +238,9 @@ export class FxRateService {
     const asOf =
       tokenUsd.asOf < (fiatRate.asOf ?? tokenUsd.asOf) ? tokenUsd.asOf : fiatRate.asOf ?? tokenUsd.asOf;
 
-    return { amount, currency: upper, rate: effectiveRate, asOf, precision };
+    const stale = !!(tokenUsd.stale || fiatRate.stale);
+
+    return { amount, currency: upper, rate: effectiveRate, asOf, precision, ...(stale && { stale: true }) };
   }
 
   /** Fetches and caches USD→fiat cross-rates for every supported non-USD currency. */
@@ -182,20 +256,13 @@ export class FxRateService {
       // Reuse the same external API — pass `fiat=USD` (base) and `target=CURRENCY`
       // convention. If the API uses a different param name operators can adapt
       // FX_RATE_API_URL to point at a compatible endpoint.
-      const res = await axios.get(this.apiUrl!, {
-        params: { base: 'USD', target: currency },
-        timeout: 5_000,
-      });
-      const rate = Number(res.data?.rate);
-      if (!Number.isFinite(rate) || rate <= 0) {
-        throw new Error(`Invalid fiat rate payload for ${currency}: ${JSON.stringify(res.data)}`);
-      }
-      await this.redis.setJson(
-        this.fiatCacheKey(currency),
-        { rate, asOf: new Date().toISOString() },
-        this.cacheTtlSeconds,
-      );
+      const rate = await this.fetchRate({ base: 'USD', target: currency }, `USD→${currency}`);
+      await this.storeRate(this.fiatCacheKey(currency), rate);
     } catch (err: any) {
+      if (err instanceof CircuitOpenError) {
+        this.logger.debug(`Skipping fiat rate fetch for USD→${currency}: ${err.message}`);
+        return;
+      }
       this.logger.warn(`Fiat rate fetch failed for USD→${currency}: ${err.message}`);
     }
   }
@@ -207,7 +274,7 @@ export class FxRateService {
    */
   async getUsdRate(tokenSymbol: string): Promise<FxRate | null> {
     try {
-      return await this.redis.getJson<FxRate>(this.cacheKey(tokenSymbol));
+      return await this.readCachedRate(this.cacheKey(tokenSymbol));
     } catch (err: any) {
       this.logger.warn(`FX rate cache read failed for ${tokenSymbol}: ${err.message}`);
       return null;
@@ -247,6 +314,7 @@ export class FxRateService {
   private toEntry(raw: FxRate | null): FxRateEntry {
     const stale =
       raw === null ||
+      raw.stale === true ||
       Date.now() - new Date(raw.asOf).getTime() > this.staleAfterMs;
 
     return {
@@ -270,15 +338,15 @@ export class FxRateService {
 
   private async refreshRate(symbol: string): Promise<void> {
     try {
-      const res = await axios.get(this.apiUrl!, { params: { symbol }, timeout: 5000 });
-      const rate = Number(res.data?.rate);
-      if (!Number.isFinite(rate) || rate <= 0) {
-        throw new Error(`Invalid rate payload: ${JSON.stringify(res.data)}`);
-      }
-      await this.redis.setJson(this.cacheKey(symbol), { rate, asOf: new Date().toISOString() }, this.cacheTtlSeconds);
+      const rate = await this.fetchRate({ symbol }, symbol);
+      await this.storeRate(this.cacheKey(symbol), rate);
     } catch (err: any) {
       // A failed fetch just leaves the previous cached rate (or nothing) in
-      // place — callers already treat a missing rate as "omit the field".
+      // place — readers fall back to the last-known rate marked stale.
+      if (err instanceof CircuitOpenError) {
+        this.logger.debug(`Skipping FX rate fetch for ${symbol}: ${err.message}`);
+        return;
+      }
       this.logger.warn(`FX rate fetch failed for ${symbol}: ${err.message}`);
     }
   }

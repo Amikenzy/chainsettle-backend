@@ -1,6 +1,11 @@
 import {
   Controller,
   Get,
+  Post,
+  Param,
+  HttpCode,
+  HttpStatus,
+  Req,
   Logger,
   UseGuards,
   Sse,
@@ -17,12 +22,19 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { UserRole } from "@prisma/client";
 import { Observable } from "rxjs";
-import { Response } from "express";
+import { Request, Response } from "express";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { AdminDashboardService } from "./admin-dashboard.service";
 import { VolumeReportQueryDto } from "./dto/volume-report-query.dto";
 import { ScheduledJobDto } from "./dto/scheduled-job.dto";
+import { TriggerJobResponseDto } from "./dto/trigger-job-response.dto";
+import { AdminJobsService } from "./admin-jobs.service";
+import {
+  AuthenticatedUser,
+  CurrentUser,
+} from "../../common/decorators/current-user.decorator";
+import { MANUALLY_RUNNABLE_JOBS } from "../../common/jobs/job-locks";
 
 @ApiTags("admin")
 @ApiBearerAuth()
@@ -33,6 +45,7 @@ export class AdminDashboardController {
 
   constructor(
     private readonly dashboard: AdminDashboardService,
+    private readonly jobs: AdminJobsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -144,5 +157,42 @@ export class AdminDashboardController {
   @ApiResponse({ status: 403, description: "Admin access required" })
   async getScheduledJobs(): Promise<ScheduledJobDto[]> {
     return this.dashboard.getScheduledJobs();
+  }
+
+  /**
+   * POST /api/v1/admin/jobs/:name/run
+   *
+   * Runs an allowlisted cron job on demand (e.g. reconciliation after an incident).
+   */
+  @Post("jobs/:name/run")
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary: "[Admin] Run an allowlisted cron job on demand",
+    description:
+      "Starts the job in the background and returns 202. Respects the job's Redis lock, " +
+      "so a run that would overlap an in-flight scheduled run is rejected with 409. " +
+      `Runnable jobs: ${MANUALLY_RUNNABLE_JOBS.join(", ")}.`,
+  })
+  @ApiResponse({
+    status: 202,
+    description: "Job run accepted",
+    type: TriggerJobResponseDto,
+  })
+  @ApiResponse({ status: 400, description: "Job is not allowlisted for manual runs" })
+  @ApiResponse({ status: 401, description: "Unauthorized" })
+  @ApiResponse({ status: 403, description: "Admin access required" })
+  @ApiResponse({ status: 404, description: "Job is not registered" })
+  @ApiResponse({ status: 409, description: "Job is already running" })
+  async runJob(
+    @Param("name") name: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() req: Request,
+  ): Promise<TriggerJobResponseDto> {
+    return this.jobs.triggerJob(name, {
+      id: user?.id,
+      stellarAddress: user?.stellarAddress,
+      ipAddress: req.ip,
+    });
   }
 }

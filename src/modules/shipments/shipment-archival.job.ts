@@ -7,7 +7,9 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RedisService } from '../../common/redis/redis.service';
 
-const ARCHIVAL_LOCK_KEY = 'chainsettle:shipment-archival:lock';
+import { JOB_LOCK_KEYS } from '../../common/jobs/job-locks';
+
+const ARCHIVAL_LOCK_KEY = JOB_LOCK_KEYS['shipment-archival'];
 const ARCHIVAL_LOCK_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const BATCH_SIZE = 50;
 export const ARCHIVAL_CRON_JOB_NAME = 'shipment-archival';

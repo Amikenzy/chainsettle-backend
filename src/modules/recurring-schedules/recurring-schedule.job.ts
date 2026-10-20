@@ -9,7 +9,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { advance } from './recurring-schedules.service';
 import { runTrackedJob } from '../../common/jobs/job-tracker.util';
 
-const LOCK_KEY = 'chainsettle:recurring-schedules:lock';
+import { JOB_LOCK_KEYS } from '../../common/jobs/job-locks';
+
+const LOCK_KEY = JOB_LOCK_KEYS['recurring-schedule'];
 const LOCK_TTL_MS = 4 * 60 * 1000;
 const BATCH_SIZE = 50;
 

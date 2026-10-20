@@ -2729,6 +2729,7 @@ export class ShipmentsService {
             rate: effectiveRate,
             asOf,
             estimate: true,
+            ...((tokenUsdRate.stale || fiatRate.stale) && { stale: true }),
           };
         })()
       : undefined;

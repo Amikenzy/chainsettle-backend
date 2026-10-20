@@ -1,6 +1,13 @@
 import { ExecutionContext, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Reflector } from '@nestjs/core';
+import {
+  InjectThrottlerOptions,
+  InjectThrottlerStorage,
+  ThrottlerGuard,
+  ThrottlerModuleOptions,
+  ThrottlerStorage,
+} from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type RateLimitInfo = {
@@ -21,10 +28,13 @@ export type RateLimitInfo = {
 @Injectable()
 export class RateLimitThrottlerGuard extends ThrottlerGuard {
   constructor(
+    @InjectThrottlerOptions() options: ThrottlerModuleOptions,
+    @InjectThrottlerStorage() storageService: ThrottlerStorage,
+    reflector: Reflector,
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
   ) {
-    super();
+    super(options, storageService, reflector);
   }
 
   private getTierLimit(tier: 'default' | 'verified' | 'admin', fallbackLimit: number): number {
