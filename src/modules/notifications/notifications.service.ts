@@ -1,24 +1,19 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-  Optional,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import * as nodemailer from "nodemailer";
-import * as fs from "fs";
-import * as path from "path";
-import * as Handlebars from "handlebars";
-import { WebPushService } from "./web-push.service";
-import { PrismaService } from "../../common/prisma/prisma.service";
-import { NotificationType } from "@prisma/client";
-import { NotificationsGateway } from "./notifications.gateway";
-import { WebhooksService } from "../webhooks/webhooks.service";
-import { PushNotificationService } from "./push-notification.service";
-import { UpdatePreferencesDto } from "./dto/update-preferences.dto";
-import { DEFAULT_LOCALE, I18nService } from "../../i18n/i18n.service";
-import { SmsProviderFactory } from "../../common/providers/sms.provider";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as nodemailer from 'nodemailer';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as crypto from 'crypto';
+import * as Handlebars from 'handlebars';
+import { WebPushService } from './web-push.service';
+import { PrismaService } from '../../common/prisma/prisma.service';
+import { NotificationType } from '@prisma/client';
+import { NotificationsGateway } from './notifications.gateway';
+import { WebhooksService } from '../webhooks/webhooks.service';
+import { PushNotificationService } from './push-notification.service';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
+import { DEFAULT_LOCALE, I18nService } from '../../i18n/i18n.service';
+import { SmsProviderFactory } from '../../common/providers/sms.provider';
 
 type ChannelPrefs = {
   inApp: boolean;
@@ -64,12 +59,14 @@ const SMS_RATE_LIMIT = 10;
 
 function buildDefaultPreferences(): PreferenceMap {
   return Object.values(NotificationType).reduce((acc, type) => {
+    const smsDefault = false;
+    const discordDefault = false;
     acc[type] = {
       inApp: true,
       email: true,
       slack: true,
-      sms: false,
-      discord: false,
+      sms: smsDefault,
+      discord: discordDefault,
       push: true,
     };
     return acc;
@@ -146,24 +143,10 @@ export class NotificationsService {
         return;
       }
 
-      const {
-        preferences: prefs,
-        slackWebhookUrl,
-        discordWebhookUrl,
-      } = await this.getOrCreatePreferenceRecord(user.id);
+      const { preferences: prefs, slackWebhookUrl, discordWebhookUrl } = await this.getOrCreatePreferenceRecord(user.id);
       const quietHours = (prefs as StoredPreferences)._quietHours;
-      const deliverAfter =
-        type === NotificationType.SYSTEM_ALERT && data?.urgent === true
-          ? null
-          : this.getQuietHoursEnd(new Date(), quietHours);
-      const {
-        inApp,
-        email: emailEnabled,
-        slack: slackEnabled,
-        sms: smsEnabled,
-        discord: discordEnabled,
-        push: pushEnabled,
-      } = normalizeChannelPrefs(prefs[type]);
+      const deliverAfter = type === NotificationType.SYSTEM_ALERT && data?.urgent === true ? null : this.getQuietHoursEnd(new Date(), quietHours);
+      const { inApp, email: emailEnabled, slack: slackEnabled, sms: smsEnabled, discord: discordEnabled, push: pushEnabled } = normalizeChannelPrefs(prefs[type]);
 
       if (!inApp) return;
 
@@ -537,116 +520,139 @@ export class NotificationsService {
     };
   }
 
-  private getQuietHoursEnd(
-    now: Date,
-    q?: { enabled: boolean; start: string; end: string; timezone: string },
-  ): Date | null {
+  private getQuietHoursEnd(now: Date, q?: { enabled: boolean; start: string; end: string; timezone: string }): Date | null {
     if (!q?.enabled) return null;
-    const local = new Intl.DateTimeFormat("en-GB", {
-      timeZone: q.timezone,
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(now);
-    const n =
-      Number(local.find((x) => x.type === "hour")?.value) * 60 +
-      Number(local.find((x) => x.type === "minute")?.value);
-    const [sh, sm] = q.start.split(":").map(Number);
-    const [eh, em] = q.end.split(":").map(Number);
+    const local = new Intl.DateTimeFormat('en-GB', { timeZone: q.timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+    const n = Number(local.find((x) => x.type === 'hour')?.value) * 60 + Number(local.find((x) => x.type === 'minute')?.value);
+    const [sh, sm] = q.start.split(':').map(Number);
+    const [eh, em] = q.end.split(':').map(Number);
     const start = sh * 60 + sm;
     const end = eh * 60 + em;
-    const active =
-      start === end ||
-      (start < end ? n >= start && n < end : n >= start || n < end);
+    const active = start === end || (start < end ? n >= start && n < end : n >= start || n < end);
     if (!active) return null;
-    const date = new Intl.DateTimeFormat("en-CA", {
-      timeZone: q.timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(now);
+    const date = new Intl.DateTimeFormat('en-CA', { timeZone: q.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
     const plusDay = start > end && n >= start;
-    const [y, mo, d] = date.split("-").map(Number);
+    const [y, mo, d] = date.split('-').map(Number);
     const wall = Date.UTC(y, mo - 1, d + (plusDay ? 1 : 0), eh, em);
     let utc = wall;
     for (let i = 0; i < 2; i++) {
       const parts: any = Object.fromEntries(
-        new Intl.DateTimeFormat("en-GB", {
+        new Intl.DateTimeFormat('en-GB', {
           timeZone: q.timezone,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hourCycle: "h23",
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
         })
           .formatToParts(new Date(utc))
           .map((x) => [x.type, x.value]),
       );
-      utc +=
-        wall -
-        Date.UTC(
-          +parts.year,
-          +parts.month - 1,
-          +parts.day,
-          +parts.hour,
-          +parts.minute,
-        );
+      utc += wall - Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute);
     }
     return new Date(utc);
   }
 
-  async deliverDeferredNotifications() {
-    const due = await this.prisma.notification.findMany({
-      where: { deliverAfter: { lte: new Date() } },
-      include: { user: { include: { notificationPreference: true } } },
-      take: 200,
-      orderBy: { deliverAfter: "asc" },
-    });
-    for (const n of due) {
-      const pref = n.user.notificationPreference;
-      const channels = normalizeChannelPrefs(
-        ((pref?.preferences ?? {}) as StoredPreferences)[n.type],
-      );
-      const forceEmail = (n.data as any)?.forceEmail === true;
-      if ((channels.email || forceEmail) && n.user.email && !n.emailSent) {
-        await this.sendEmail(
-          n.user.email,
-          n.title,
-          n.message,
-          undefined,
-          n.type,
-          n.data as any,
-          n.user.locale ?? DEFAULT_LOCALE,
-        );
-        await this.prisma.notification.update({
-          where: { id: n.id },
-          data: { emailSent: true },
-        });
-      }
-      if (channels.slack && pref?.slackWebhookUrl) {
-        await this.sendSlackMessage(
-          pref.slackWebhookUrl,
-          n.type,
-          n.title,
-          n.message,
-          n.data as any,
-        );
-      }
-      if (channels.push) {
-        await this.webPush?.sendToUser(
-          n.userId,
-          n.type,
-          n.title,
-          n.message,
-          n.data as any,
-        );
-      }
-      await this.prisma.notification.update({
-        where: { id: n.id },
-        data: { deliverAfter: null },
-      });
+  /**
+   * Generates a signed, expiring unsubscribe token for a user and notification type.
+   */
+  generateUnsubscribeToken(userId: string, type: NotificationType | string = 'ALL'): string {
+    const secret = this.config.get<string>('JWT_SECRET', 'secret');
+    const exp = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
+    const payload = { userId, type, exp };
+    const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const sig = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+    return `${data}.${sig}`;
+  }
+
+  /**
+   * Verifies an unsubscribe token and returns the payload.
+   * Throws BadRequestException if token is missing, malformed, tampered, or expired.
+   */
+  verifyUnsubscribeToken(token: string): { userId: string; type: NotificationType | string } {
+    if (!token || typeof token !== 'string') {
+      throw new BadRequestException('Unsubscribe token is required');
     }
+    const parts = token.split('.');
+    if (parts.length !== 2) {
+      throw new BadRequestException('Invalid unsubscribe token format');
+    }
+    const [data, sig] = parts;
+    const secret = this.config.get<string>('JWT_SECRET', 'secret');
+    const expectedSig = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+    const sigBuf = Buffer.from(sig);
+    const expectedBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      throw new BadRequestException('Invalid or tampered unsubscribe token');
+    }
+
+    let payload: { userId: string; type: NotificationType | string; exp: number };
+    try {
+      payload = JSON.parse(Buffer.from(data, 'base64url').toString('utf8'));
+    } catch {
+      throw new BadRequestException('Invalid unsubscribe token payload');
+    }
+
+    if (!payload.userId || !payload.type || !payload.exp) {
+      throw new BadRequestException('Invalid unsubscribe token payload');
+    }
+
+    if (Date.now() > payload.exp) {
+      throw new BadRequestException('Unsubscribe token has expired');
+    }
+
+    return { userId: payload.userId, type: payload.type };
+  }
+
+  /**
+   * Builds the full unsubscribe URL with a signed token.
+   */
+  getUnsubscribeUrl(userId: string, type: NotificationType | string = 'ALL'): string {
+    const token = this.generateUnsubscribeToken(userId, type);
+    const apiBaseUrl = this.config.get<string>('API_BASE_URL', 'http://localhost:3000');
+    return `${apiBaseUrl}/api/v1/notifications/unsubscribe?token=${token}`;
+  }
+
+  /**
+   * Unsubscribes a user from email notifications using a signed token.
+   * Updates NotificationPreference to set email: false for the specified notification type (or ALL).
+   */
+  async unsubscribe(token: string): Promise<{ success: boolean; message: string; type: string }> {
+    const { userId, type } = this.verifyUnsubscribeToken(token);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const current = (await this.getOrCreatePreferences(userId)) as StoredPreferences;
+    const merged: StoredPreferences = { ...current };
+
+    if (type === 'ALL') {
+      for (const notifType of Object.values(NotificationType)) {
+        const existing = normalizeChannelPrefs(merged[notifType]);
+        merged[notifType] = { ...existing, email: false };
+      }
+    } else {
+      const notifType = type as NotificationType;
+      const existing = normalizeChannelPrefs(merged[notifType]);
+      merged[notifType] = { ...existing, email: false };
+    }
+
+    await this.prisma.notificationPreference.update({
+      where: { userId },
+      data: { preferences: merged },
+    });
+
+    this.logger.log(`User ${userId} unsubscribed from ${type} email notifications`);
+    return {
+      success: true,
+      message: `Successfully unsubscribed from ${type === 'ALL' ? 'all' : type} email notifications`,
+      type: String(type),
+    };
   }
 
   async findForUser(
@@ -847,6 +853,8 @@ export class NotificationsService {
       })
       .join("");
 
+    const unsubscribeUrl = this.getUnsubscribeUrl(userId, 'ALL');
+
     const html = `
       <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
         <h2 style="color:#1a1a2e;">ChainSettle — Daily Notification Digest</h2>
@@ -854,6 +862,8 @@ export class NotificationsService {
         ${sections}
         <hr />
         <small style="color:#888;">Log in to ChainSettle to view and manage your notifications.</small>
+        <br />
+        <small style="color:#888;"><a href="${unsubscribeUrl}" style="color:#888;text-decoration:underline;">Unsubscribe</a></small>
       </div>
     `;
 
@@ -874,6 +884,7 @@ export class NotificationsService {
     type: NotificationType,
     data: Record<string, any>,
     locale: string = DEFAULT_LOCALE,
+    unsubscribeUrl?: string,
   ): string | null {
     const candidatePaths = [
       path.join(__dirname, "templates", locale, `${type}.hbs`),
@@ -897,7 +908,7 @@ export class NotificationsService {
             ]),
           )
         : {};
-      return template({ ...(data ?? {}), t: interpolated });
+      return template({ ...(data ?? {}), t: interpolated, unsubscribeUrl });
     } catch (error) {
       this.logger.error(`Failed to render template for ${type}`, error.message);
       return null;
@@ -912,6 +923,7 @@ export class NotificationsService {
     type?: NotificationType,
     data?: Record<string, any>,
     locale: string = DEFAULT_LOCALE,
+    userId?: string,
   ): Promise<boolean> {
     // Never send to addresses that hard-bounced or complained (#434).
     if (await this.isEmailSuppressed(to)) {
@@ -921,10 +933,33 @@ export class NotificationsService {
       return false;
     }
     try {
+      let resolvedUserId = userId;
+      if (!resolvedUserId) {
+        try {
+          const user = await this.prisma.user.findFirst({
+            where: { email: { equals: to.trim().toLowerCase(), mode: 'insensitive' } },
+            select: { id: true },
+          });
+          resolvedUserId = user?.id;
+        } catch {
+          // ignore lookup errors
+        }
+      }
+
+      let unsubscribeUrl: string | undefined;
+      let headers: Record<string, string> | undefined;
+
+      if (resolvedUserId) {
+        unsubscribeUrl = this.getUnsubscribeUrl(resolvedUserId, type ?? 'ALL');
+        headers = {
+          'List-Unsubscribe': `<${unsubscribeUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        };
+      }
+
       let renderedHtml = html;
       if (!renderedHtml && type) {
-        renderedHtml =
-          this.renderTemplate(type, data ?? {}, locale) ?? undefined;
+        renderedHtml = this.renderTemplate(type, data ?? {}, locale, unsubscribeUrl) ?? undefined;
       }
       const localizedSubject =
         type && this.i18n.getEmailCopy(type, locale)?.subject
@@ -933,6 +968,10 @@ export class NotificationsService {
       const footer =
         this.i18n.t("email.GENERIC_FOOTER", locale) ||
         "You're receiving this because you're a participant on ChainSettle.";
+      const footerHtml = unsubscribeUrl
+        ? `<small style="color: #888;">${footer}</small><br /><small style="color: #888;"><a href="${unsubscribeUrl}" style="color: #888; text-decoration: underline;">Unsubscribe</a></small>`
+        : `<small style="color: #888;">${footer}</small>`;
+
       await this.transporter.sendMail({
         from: this.config.get("EMAIL_FROM", "noreply@chainsetttle.com"),
         to,
@@ -945,9 +984,10 @@ export class NotificationsService {
             <h2 style="color: #1a1a2e;">ChainSettle</h2>
             <p>${text}</p>
             <hr />
-            <small style="color: #888;">${footer}</small>
+            ${footerHtml}
           </div>
         `,
+        ...(headers ? { headers } : {}),
       });
       this.logger.log(`Email sent to ${to}: ${localizedSubject}`);
       return true;
@@ -960,17 +1000,14 @@ export class NotificationsService {
   /** True when the address is on the bounce/complaint suppression list (#434). */
   async isEmailSuppressed(email: string): Promise<boolean> {
     try {
-      const hit = await this.prisma.emailSuppression.findUnique({
+      const hit = await (this.prisma as any).emailSuppression?.findUnique({
         where: { email: email.trim().toLowerCase() },
         select: { id: true },
       });
       return !!hit;
     } catch (error) {
       // Fail closed: if we can't check the list, don't risk hurting sender reputation.
-      this.logger.error(
-        `Suppression lookup failed for ${email}`,
-        error.message,
-      );
+      this.logger.error(`Suppression lookup failed for ${email}`, (error as any).message);
       return true;
     }
   }

@@ -4,22 +4,23 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Cron, CronExpression } from '@nestjs/schedule';
-import * as crypto from 'crypto';
-import axios, { AxiosError } from 'axios';
-import { PrismaService } from '../../common/prisma/prisma.service';
-import { AuditLogService } from '../audit-logs/audit-log.service';
-import { NotificationType, Prisma } from '@prisma/client';
-import { CreateWebhookDto } from './dto/create-webhook.dto';
-import { UpdateWebhookDto } from './dto/update-webhook.dto';
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { Cron, CronExpression } from "@nestjs/schedule";
+import * as crypto from "crypto";
+import axios, { AxiosError } from "axios";
+import { PrismaService } from "../../common/prisma/prisma.service";
+import { AuditLogService } from "../audit-logs/audit-log.service";
+import { NotificationType, Prisma } from "@prisma/client";
+import { CreateWebhookDto } from "./dto/create-webhook.dto";
+import { UpdateWebhookDto } from "./dto/update-webhook.dto";
 import {
   validateHeaders,
   encryptHeaders,
   decryptHeaders,
   maskHeaders,
-} from './webhook-headers.util';
+} from "./webhook-headers.util";
+import { requestIdStorage } from "../../common/middleware/request-id.middleware";
 
 // ─── Retry policy ────────────────────────────────────────────────────────────
 
@@ -28,11 +29,11 @@ const MAX_AUTO_ATTEMPTS = 5;
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
 const RETRYABLE_ERROR_CODES = new Set([
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'ETIMEDOUT',
-  'ENOTFOUND',
-  'ERR_NETWORK',
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "ERR_NETWORK",
 ]);
 
 const DELIVERY_RESPONSE_BODY_MAX = 10 * 1024;
@@ -56,18 +57,25 @@ function isRetryable(err: AxiosError | Error): boolean {
   if (axiosErr.response) {
     return RETRYABLE_STATUS_CODES.has(axiosErr.response.status);
   }
-  const code: string = (axiosErr as any).code ?? '';
-  return RETRYABLE_ERROR_CODES.has(code) || axiosErr.code === 'ECONNABORTED';
+  const code: string = (axiosErr as any).code ?? "";
+  return RETRYABLE_ERROR_CODES.has(code) || axiosErr.code === "ECONNABORTED";
 }
 
-function buildBody(eventType: string, payload: Record<string, unknown>): string {
-  return JSON.stringify({ eventType, payload, timestamp: new Date().toISOString() });
+function buildBody(
+  eventType: string,
+  payload: Record<string, unknown>,
+): string {
+  return JSON.stringify({
+    eventType,
+    payload,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 /** Legacy v1 signature — kept for one deprecation cycle.
  *  Signs only the raw JSON body. */
 function signBody(secret: string, body: string): string {
-  return `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`;
+  return `sha256=${crypto.createHmac("sha256", secret).update(body).digest("hex")}`;
 }
 
 /**
@@ -77,9 +85,16 @@ function signBody(secret: string, body: string): string {
  * Signed payload:  `${timestampSeconds}.${rawJsonBody}`
  * Header format:   `t=<unix-seconds>,v1=<hex-digest>`
  */
-function signBodyV2(secret: string, timestampSeconds: number, body: string): string {
+function signBodyV2(
+  secret: string,
+  timestampSeconds: number,
+  body: string,
+): string {
   const signedContent = `${timestampSeconds}.${body}`;
-  const digest = crypto.createHmac('sha256', secret).update(signedContent).digest('hex');
+  const digest = crypto
+    .createHmac("sha256", secret)
+    .update(signedContent)
+    .digest("hex");
   return `t=${timestampSeconds},v1=${digest}`;
 }
 
@@ -110,26 +125,35 @@ export class WebhooksService {
     private readonly auditLog: AuditLogService,
   ) {
     this.deliveryTimeoutMs = this.normalizePositiveInteger(
-      this.config.get<number | string>('WEBHOOK_DELIVERY_TIMEOUT_MS', 10_000),
+      this.config.get<number | string>("WEBHOOK_DELIVERY_TIMEOUT_MS", 10_000),
       10_000,
     );
     this.maxPayloadBytes = this.normalizePositiveInteger(
-      this.config.get<number | string>('WEBHOOK_MAX_PAYLOAD_BYTES', 256 * 1024),
+      this.config.get<number | string>("WEBHOOK_MAX_PAYLOAD_BYTES", 256 * 1024),
       256 * 1024,
     );
     this.encryptionKey = String(
-      this.config.get<string>('WEBHOOK_HEADERS_ENCRYPTION_KEY', 'change-me-webhook-headers-key!!!!'),
+      this.config.get<string>(
+        "WEBHOOK_HEADERS_ENCRYPTION_KEY",
+        "change-me-webhook-headers-key!!!!",
+      ),
     );
   }
 
-  private normalizePositiveInteger(value: number | string | undefined, fallback: number): number {
+  private normalizePositiveInteger(
+    value: number | string | undefined,
+    fallback: number,
+  ): number {
     const parsed = Number(value ?? fallback);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 
-  private preparePayloadForDelivery(eventType: string, payload: Record<string, unknown>) {
+  private preparePayloadForDelivery(
+    eventType: string,
+    payload: Record<string, unknown>,
+  ) {
     const body = buildBody(eventType, payload);
-    const bytes = Buffer.byteLength(body, 'utf8');
+    const bytes = Buffer.byteLength(body, "utf8");
     const exceedsLimit = bytes > this.maxPayloadBytes;
 
     if (exceedsLimit) {
@@ -151,12 +175,14 @@ export class WebhooksService {
       ep.headers as Record<string, string> | null | undefined,
       this.encryptionKey,
     );
+    const requestId = requestIdStorage.getStore();
     return {
       ...custom,
-      'Content-Type': 'application/json',
-      'X-ChainSettle-Timestamp': String(ts),
-      'X-ChainSettle-Signature': signature,
-      'X-ChainSettle-Signature-V2': signatureV2,
+      "Content-Type": "application/json",
+      "X-ChainSettle-Timestamp": String(ts),
+      "X-ChainSettle-Signature": signature,
+      "X-ChainSettle-Signature-V2": signatureV2,
+      ...(requestId && { "X-Request-ID": requestId }),
     };
   }
 
@@ -168,11 +194,14 @@ export class WebhooksService {
       if (err) throw new BadRequestException(`headers: ${err.message}`);
     }
 
-    const plaintext = crypto.randomBytes(32).toString('hex');
-    const hashed = crypto.createHash('sha256').update(plaintext).digest('hex');
+    const plaintext = crypto.randomBytes(32).toString("hex");
+    const hashed = crypto.createHash("sha256").update(plaintext).digest("hex");
 
     const encryptedHeaders = dto.headers
-      ? (encryptHeaders(dto.headers, this.encryptionKey) as Prisma.InputJsonValue)
+      ? (encryptHeaders(
+          dto.headers,
+          this.encryptionKey,
+        ) as Prisma.InputJsonValue)
       : null;
 
     const endpoint = await this.prisma.webhookEndpoint.create({
@@ -200,7 +229,7 @@ export class WebhooksService {
     const existing = await this.prisma.webhookEndpoint.findFirst({
       where: { id, userId },
     });
-    if (!existing) throw new NotFoundException('Webhook endpoint not found');
+    if (!existing) throw new NotFoundException("Webhook endpoint not found");
 
     if (dto.headers !== undefined) {
       const err = validateHeaders(dto.headers);
@@ -214,8 +243,11 @@ export class WebhooksService {
     if (dto.headers !== undefined) {
       const cleared = Object.keys(dto.headers).length === 0;
       data.headers = cleared
-        ? Prisma.DbNull
-        : (encryptHeaders(dto.headers, this.encryptionKey) as Prisma.InputJsonValue);
+        ? Prisma.AnyNull
+        : (encryptHeaders(
+            dto.headers,
+            this.encryptionKey,
+          ) as Prisma.InputJsonValue);
     }
 
     const updated = await this.prisma.webhookEndpoint.update({
@@ -230,9 +262,9 @@ export class WebhooksService {
 
     await this.auditLog.record({
       actorId: userId,
-      actorAddress: user?.stellarAddress ?? 'unknown',
-      action: 'WEBHOOK_UPDATED',
-      resourceType: 'WebhookEndpoint',
+      actorAddress: user?.stellarAddress ?? "unknown",
+      action: "WEBHOOK_UPDATED",
+      resourceType: "WebhookEndpoint",
       resourceId: id,
       metadata: { fields: Object.keys(data) },
     });
@@ -243,8 +275,13 @@ export class WebhooksService {
           ? undefined
           : maskHeaders(dto.headers)
         : updated.headers
-        ? maskHeaders(decryptHeaders(updated.headers as Record<string, string>, this.encryptionKey))
-        : undefined;
+          ? maskHeaders(
+              decryptHeaders(
+                updated.headers as Record<string, string>,
+                this.encryptionKey,
+              ),
+            )
+          : undefined;
 
     return {
       id: updated.id,
@@ -260,7 +297,14 @@ export class WebhooksService {
     return this.prisma.webhookEndpoint
       .findMany({
         where: { userId },
-        select: { id: true, url: true, events: true, active: true, createdAt: true, headers: true },
+        select: {
+          id: true,
+          url: true,
+          events: true,
+          active: true,
+          createdAt: true,
+          headers: true,
+        },
       })
       .then((list) =>
         list.map((ep) => ({
@@ -270,7 +314,12 @@ export class WebhooksService {
           active: ep.active,
           createdAt: ep.createdAt,
           headers: ep.headers
-            ? maskHeaders(decryptHeaders(ep.headers as Record<string, string>, this.encryptionKey))
+            ? maskHeaders(
+                decryptHeaders(
+                  ep.headers as Record<string, string>,
+                  this.encryptionKey,
+                ),
+              )
             : undefined,
         })),
       );
@@ -279,14 +328,21 @@ export class WebhooksService {
   async findOneWithSummary(userId: string, id: string) {
     const endpoint = await this.prisma.webhookEndpoint.findFirst({
       where: { id, userId },
-      select: { id: true, url: true, events: true, active: true, createdAt: true, headers: true },
+      select: {
+        id: true,
+        url: true,
+        events: true,
+        active: true,
+        createdAt: true,
+        headers: true,
+      },
     });
 
-    if (!endpoint) throw new NotFoundException('Webhook endpoint not found');
+    if (!endpoint) throw new NotFoundException("Webhook endpoint not found");
 
     const recentDeliveries = await this.prisma.webhookDelivery.findMany({
       where: { endpointId: id },
-      orderBy: { id: 'desc' },
+      orderBy: { id: "desc" },
       take: 20,
       select: { statusCode: true, deliveredAt: true },
     });
@@ -308,27 +364,38 @@ export class WebhooksService {
       active: endpoint.active,
       createdAt: endpoint.createdAt,
       headers: endpoint.headers
-        ? maskHeaders(decryptHeaders(endpoint.headers as Record<string, string>, this.encryptionKey))
+        ? maskHeaders(
+            decryptHeaders(
+              endpoint.headers as Record<string, string>,
+              this.encryptionKey,
+            ),
+          )
         : undefined,
       recentDeliveries: { total, successCount, failureCount, lastDeliveryAt },
     };
   }
 
   async remove(id: string, userId: string) {
-    const ep = await this.prisma.webhookEndpoint.findFirst({ where: { id, userId } });
-    if (!ep) throw new NotFoundException('Webhook endpoint not found');
+    const ep = await this.prisma.webhookEndpoint.findFirst({
+      where: { id, userId },
+    });
+    if (!ep) throw new NotFoundException("Webhook endpoint not found");
     return this.prisma.webhookEndpoint.delete({ where: { id } });
   }
 
   async rotateSecret(id: string, userId: string) {
     const ep = await this.prisma.webhookEndpoint.findFirst({ where: { id } });
-    if (!ep) throw new NotFoundException('Webhook endpoint not found');
-    if (ep.userId !== userId) throw new ForbiddenException('Not the endpoint owner');
+    if (!ep) throw new NotFoundException("Webhook endpoint not found");
+    if (ep.userId !== userId)
+      throw new ForbiddenException("Not the endpoint owner");
 
-    const plaintext = crypto.randomBytes(32).toString('hex');
-    const hashed = crypto.createHash('sha256').update(plaintext).digest('hex');
+    const plaintext = crypto.randomBytes(32).toString("hex");
+    const hashed = crypto.createHash("sha256").update(plaintext).digest("hex");
 
-    await this.prisma.webhookEndpoint.update({ where: { id }, data: { secret: hashed } });
+    await this.prisma.webhookEndpoint.update({
+      where: { id },
+      data: { secret: hashed },
+    });
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -337,19 +404,24 @@ export class WebhooksService {
 
     await this.auditLog.record({
       actorId: userId,
-      actorAddress: user?.stellarAddress ?? 'unknown',
-      action: 'WEBHOOK_SECRET_ROTATED',
-      resourceType: 'WebhookEndpoint',
+      actorAddress: user?.stellarAddress ?? "unknown",
+      action: "WEBHOOK_SECRET_ROTATED",
+      resourceType: "WebhookEndpoint",
       resourceId: id,
     });
 
-    this.logger.log(`Webhook secret rotated for endpoint ${id} by user ${userId}`);
+    this.logger.log(
+      `Webhook secret rotated for endpoint ${id} by user ${userId}`,
+    );
     return { secret: plaintext };
   }
 
   // ── Delivery ───────────────────────────────────────────────────────────────
 
-  async dispatch(eventType: NotificationType, payload: Record<string, unknown>) {
+  async dispatch(
+    eventType: NotificationType,
+    payload: Record<string, unknown>,
+  ) {
     const endpoints = await this.prisma.webhookEndpoint.findMany({
       where: { active: true, events: { has: eventType } },
     });
@@ -362,16 +434,17 @@ export class WebhooksService {
     const endpoint = await this.prisma.webhookEndpoint.findFirst({
       where: { id: endpointId, userId },
     });
-    if (!endpoint) throw new NotFoundException('Webhook endpoint not found');
+    if (!endpoint) throw new NotFoundException("Webhook endpoint not found");
 
     const delivery = await this.prisma.webhookDelivery.findFirst({
       where: { id: deliveryId, endpointId },
     });
-    if (!delivery) throw new NotFoundException('Webhook delivery not found');
+    if (!delivery) throw new NotFoundException("Webhook delivery not found");
 
     return {
       ...delivery,
-      responseBody: delivery.responseBody?.slice(0, DELIVERY_RESPONSE_BODY_MAX) ?? null,
+      responseBody:
+        delivery.responseBody?.slice(0, DELIVERY_RESPONSE_BODY_MAX) ?? null,
       retryStatus: this.describeRetryStatus(delivery),
     };
   }
@@ -385,7 +458,7 @@ export class WebhooksService {
     const endpoint = await this.prisma.webhookEndpoint.findFirst({
       where: { id: endpointId, userId },
     });
-    if (!endpoint) throw new NotFoundException('Webhook endpoint not found');
+    if (!endpoint) throw new NotFoundException("Webhook endpoint not found");
 
     const skip = (page - 1) * limit;
     const where = { endpointId, deliveredAt: null } as const;
@@ -393,7 +466,7 @@ export class WebhooksService {
     const [deliveries, total] = await Promise.all([
       this.prisma.webhookDelivery.findMany({
         where,
-        orderBy: { id: 'desc' },
+        orderBy: { id: "desc" },
         skip,
         take: limit,
       }),
@@ -403,7 +476,8 @@ export class WebhooksService {
     return {
       data: deliveries.map((delivery) => ({
         ...delivery,
-        responseBody: delivery.responseBody?.slice(0, DELIVERY_RESPONSE_BODY_MAX) ?? null,
+        responseBody:
+          delivery.responseBody?.slice(0, DELIVERY_RESPONSE_BODY_MAX) ?? null,
         retryStatus: this.describeRetryStatus(delivery),
       })),
       pagination: {
@@ -420,13 +494,15 @@ export class WebhooksService {
       where: { id: endpointId, userId },
     });
     if (!endpoint) {
-      throw new ForbiddenException('Only the endpoint owner can retry deliveries');
+      throw new ForbiddenException(
+        "Only the endpoint owner can retry deliveries",
+      );
     }
 
     const delivery = await this.prisma.webhookDelivery.findFirst({
       where: { id: deliveryId, endpointId },
     });
-    if (!delivery) throw new NotFoundException('Webhook delivery not found');
+    if (!delivery) throw new NotFoundException("Webhook delivery not found");
 
     const payloadCheck = this.preparePayloadForDelivery(
       delivery.eventType,
@@ -452,17 +528,18 @@ export class WebhooksService {
       this.logger.warn(
         `[webhook] Manual retry ${deliveryId} skipped for endpoint ${endpointId}: payload exceeds configured max of ${this.maxPayloadBytes} bytes`,
       );
-      return { message: 'Webhook delivery retried' };
+      return { message: "Webhook delivery retried" };
     }
 
     try {
+      const headers = this.buildDeliveryHeaders(
+        endpoint,
+        ts,
+        signature,
+        signatureV2,
+      );
       const res = await axios.post(endpoint.url, body, {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-ChainSettle-Timestamp': String(ts),
-          'X-ChainSettle-Signature': signature,
-          'X-ChainSettle-Signature-V2': signatureV2,
-        },
+        headers,
         timeout: this.deliveryTimeoutMs,
       });
 
@@ -470,7 +547,7 @@ export class WebhooksService {
         where: { id: deliveryId },
         data: {
           statusCode: res.status,
-          responseBody: String(res.data ?? '').slice(0, 1_000),
+          responseBody: String(res.data ?? "").slice(0, 1_000),
           deliveredAt: new Date(),
           attemptCount: delivery.attemptCount + 1,
           nextRetryAt: null,
@@ -478,9 +555,10 @@ export class WebhooksService {
         },
       });
     } catch (err) {
-      const statusCode: number | null = (err as AxiosError).response?.status ?? null;
+      const statusCode: number | null =
+        (err as AxiosError).response?.status ?? null;
       const responseBody = String(
-        (err as AxiosError).response?.data ?? (err as Error).message ?? '',
+        (err as AxiosError).response?.data ?? (err as Error).message ?? "",
       ).slice(0, 1_000);
 
       await this.prisma.webhookDelivery.update({
@@ -494,14 +572,14 @@ export class WebhooksService {
       });
     }
 
-    return { message: 'Webhook delivery retried' };
+    return { message: "Webhook delivery retried" };
   }
 
   async replayFailedDeliveries(endpointId: string, from: Date, to: Date) {
     const endpoint = await this.prisma.webhookEndpoint.findUnique({
       where: { id: endpointId },
     });
-    if (!endpoint) throw new NotFoundException('Webhook endpoint not found');
+    if (!endpoint) throw new NotFoundException("Webhook endpoint not found");
 
     const deliveries = await this.prisma.webhookDelivery.findMany({
       where: {
@@ -513,21 +591,34 @@ export class WebhooksService {
     });
 
     await Promise.allSettled(
-      deliveries.map((d) => this.retryDelivery(endpointId, d.id, endpoint.userId)),
+      deliveries.map((d) =>
+        this.retryDelivery(endpointId, d.id, endpoint.userId),
+      ),
     );
 
     this.logger.log(
       `[admin-replay] Queued ${deliveries.length} failed delivery(ies) for endpoint ${endpointId} (${from.toISOString()} – ${to.toISOString()})`,
     );
 
-    return { endpointId, from: from.toISOString(), to: to.toISOString(), deliveriesQueued: deliveries.length };
+    return {
+      endpointId,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      deliveriesQueued: deliveries.length,
+    };
   }
 
-  private async sendTestPing(
-    endpoint: { id: string; url: string; secret: string; headers?: unknown },
-  ) {
-    const bodyObj = { message: 'This is a test ping from ChainSettle' };
-    const payloadCheck = this.preparePayloadForDelivery('WEBHOOK_TEST', bodyObj);
+  private async sendTestPing(endpoint: {
+    id: string;
+    url: string;
+    secret: string;
+    headers?: unknown;
+  }) {
+    const bodyObj = { message: "This is a test ping from ChainSettle" };
+    const payloadCheck = this.preparePayloadForDelivery(
+      "WEBHOOK_TEST",
+      bodyObj,
+    );
     const startedAt = Date.now();
 
     if (payloadCheck.exceedsLimit) {
@@ -547,10 +638,10 @@ export class WebhooksService {
     try {
       const res = await axios.post(endpoint.url, payloadCheck.body, {
         headers: {
-          'Content-Type': 'application/json',
-          'X-ChainSettle-Timestamp': String(ts),
-          'X-ChainSettle-Signature': signature,
-          'X-ChainSettle-Signature-V2': signatureV2,
+          "Content-Type": "application/json",
+          "X-ChainSettle-Timestamp": String(ts),
+          "X-ChainSettle-Signature": signature,
+          "X-ChainSettle-Signature-V2": signatureV2,
         },
         timeout: this.deliveryTimeoutMs,
       });
@@ -562,9 +653,12 @@ export class WebhooksService {
         latencyMs: Date.now() - startedAt,
       };
     } catch (err) {
-      const statusCode: number | null = (err as AxiosError).response?.status ?? null;
+      const statusCode: number | null =
+        (err as AxiosError).response?.status ?? null;
       const errorMessage = String(
-        (err as AxiosError).response?.data ?? (err as Error).message ?? 'Unknown error',
+        (err as AxiosError).response?.data ??
+          (err as Error).message ??
+          "Unknown error",
       ).slice(0, 1_000);
 
       return {
@@ -608,9 +702,7 @@ export class WebhooksService {
     this.logger.debug(`[retry-queue] Processing ${due.length} due deliveries`);
 
     await Promise.allSettled(
-      due.map((delivery) =>
-        this.executeRetry(delivery.endpoint, delivery),
-      ),
+      due.map((delivery) => this.executeRetry(delivery.endpoint, delivery)),
     );
   }
 
@@ -656,10 +748,10 @@ export class WebhooksService {
     try {
       const res = await axios.post(ep.url, body, {
         headers: {
-          'Content-Type': 'application/json',
-          'X-ChainSettle-Timestamp': String(ts),
-          'X-ChainSettle-Signature': signature,
-          'X-ChainSettle-Signature-V2': signatureV2,
+          "Content-Type": "application/json",
+          "X-ChainSettle-Timestamp": String(ts),
+          "X-ChainSettle-Signature": signature,
+          "X-ChainSettle-Signature-V2": signatureV2,
         },
         timeout: this.deliveryTimeoutMs,
       });
@@ -668,13 +760,18 @@ export class WebhooksService {
         where: { id: delivery.id },
         data: {
           statusCode: res.status,
-          responseBody: String(res.data ?? '').slice(0, 1_000),
+          responseBody: String(res.data ?? "").slice(0, 1_000),
           deliveredAt: new Date(),
           nextRetryAt: null,
         },
       });
     } catch (err) {
-      await this.handleFailure(delivery, ep.secret, ep.url, err as AxiosError | Error);
+      await this.handleFailure(
+        delivery,
+        ep.secret,
+        ep.url,
+        err as AxiosError | Error,
+      );
     }
   }
 
@@ -724,10 +821,10 @@ export class WebhooksService {
     try {
       const res = await axios.post(ep.url, body, {
         headers: {
-          'Content-Type': 'application/json',
-          'X-ChainSettle-Timestamp': String(ts),
-          'X-ChainSettle-Signature': signature,
-          'X-ChainSettle-Signature-V2': signatureV2,
+          "Content-Type": "application/json",
+          "X-ChainSettle-Timestamp": String(ts),
+          "X-ChainSettle-Signature": signature,
+          "X-ChainSettle-Signature-V2": signatureV2,
         },
         timeout: this.deliveryTimeoutMs,
       });
@@ -736,7 +833,7 @@ export class WebhooksService {
         where: { id: delivery.id },
         data: {
           statusCode: res.status,
-          responseBody: String(res.data ?? '').slice(0, 1_000),
+          responseBody: String(res.data ?? "").slice(0, 1_000),
           deliveredAt: new Date(),
           nextRetryAt: null,
           permanentlyFailedAt: null,
@@ -762,9 +859,10 @@ export class WebhooksService {
     _url: string,
     err: AxiosError | Error,
   ) {
-    const statusCode: number | null = (err as AxiosError).response?.status ?? null;
+    const statusCode: number | null =
+      (err as AxiosError).response?.status ?? null;
     const responseBody = String(
-      (err as AxiosError).response?.data ?? (err as Error).message ?? '',
+      (err as AxiosError).response?.data ?? (err as Error).message ?? "",
     ).slice(0, 1_000);
 
     const retryable = isRetryable(err);
@@ -775,7 +873,12 @@ export class WebhooksService {
 
       await this.prisma.webhookDelivery.update({
         where: { id: delivery.id },
-        data: { statusCode, responseBody, nextRetryAt, permanentlyFailedAt: null },
+        data: {
+          statusCode,
+          responseBody,
+          nextRetryAt,
+          permanentlyFailedAt: null,
+        },
       });
 
       this.logger.warn(
@@ -809,27 +912,35 @@ export class WebhooksService {
     nextRetryAt: Date | null;
     attemptCount: number;
   }): {
-    state: 'succeeded' | 'pending_retry' | 'permanently_failed' | 'pending';
+    state: "succeeded" | "pending_retry" | "permanently_failed" | "pending";
     nextRetryAt: Date | null;
     attemptCount: number;
   } {
     if (delivery.deliveredAt) {
-      return { state: 'succeeded', nextRetryAt: null, attemptCount: delivery.attemptCount };
+      return {
+        state: "succeeded",
+        nextRetryAt: null,
+        attemptCount: delivery.attemptCount,
+      };
     }
     if (delivery.permanentlyFailedAt) {
       return {
-        state: 'permanently_failed',
+        state: "permanently_failed",
         nextRetryAt: null,
         attemptCount: delivery.attemptCount,
       };
     }
     if (delivery.nextRetryAt) {
       return {
-        state: 'pending_retry',
+        state: "pending_retry",
         nextRetryAt: delivery.nextRetryAt,
         attemptCount: delivery.attemptCount,
       };
     }
-    return { state: 'pending', nextRetryAt: null, attemptCount: delivery.attemptCount };
+    return {
+      state: "pending",
+      nextRetryAt: null,
+      attemptCount: delivery.attemptCount,
+    };
   }
 }

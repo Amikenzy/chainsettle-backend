@@ -73,7 +73,7 @@ export class NotificationDigestJob {
         const digest = await this.notifications.buildDigest(user.id);
         if (!digest) continue;
 
-        await this.notifications.sendEmail(user.email!, digest.subject, '', digest.html);
+        await this.notifications.sendEmail(user.email!, digest.subject, '', digest.html, undefined, undefined, undefined, user.id);
         sent++;
       } catch (err) {
         this.logger.error(`Digest failed for user ${user.id}`, err.message);

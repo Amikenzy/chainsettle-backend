@@ -12,6 +12,7 @@ API keys give automated integrations (CI pipelines, backend services, monitoring
   - [List Keys](#list-keys)
   - [Rotate a Key](#rotate-a-key)
   - [Revoke a Key](#revoke-a-key)
+  - [Get Usage Stats](#get-usage-stats)
 - [Using a Key in Requests](#using-a-key-in-requests)
 - [Scopes](#scopes)
 - [Storage and Key Format](#storage-and-key-format)
@@ -209,6 +210,39 @@ curl -s -X DELETE https://api.example.com/api/v1/auth/api-keys/3f2a1c9d-4e5b-6c7
     "message": "API key revoked successfully"
   },
   "timestamp": "2026-09-29T15:00:00.000Z"
+}
+```
+
+---
+
+### Get Usage Stats
+
+Retrieve daily request counts for the last 30 days along with `lastUsedAt`. This allows key owners to audit usage activity, identify idle keys, and detect leaked keys. Owner-only.
+
+```
+GET /api/v1/auth/api-keys/:id/usage
+```
+
+**Example:**
+
+```bash
+curl -s https://api.example.com/api/v1/auth/api-keys/3f2a1c9d-4e5b-6c7d-8e9f-0a1b2c3d4e5f/usage \
+  -H "Authorization: Bearer $JWT"
+```
+
+**Response (HTTP 200):**
+
+```json
+{
+  "id": "3f2a1c9d-4e5b-6c7d-8e9f-0a1b2c3d4e5f",
+  "name": "CI Deployment Key",
+  "lastUsedAt": "2026-10-19T10:15:30.000Z",
+  "totalRequests30d": 128,
+  "dailyUsage": [
+    { "date": "2026-09-20", "count": 0 },
+    { "date": "2026-10-18", "count": 42 },
+    { "date": "2026-10-19", "count": 86 }
+  ]
 }
 ```
 

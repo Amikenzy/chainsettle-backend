@@ -29,6 +29,8 @@ import { AuditLogService } from '../audit-logs/audit-log.service';
 import { CreateApiKeyDto, API_KEY_SCOPES } from './dto/create-api-key.dto';
 import { ApiKeyResponseDto } from './dto/api-key-response.dto';
 import { RotateApiKeyDto } from './dto/rotate-api-key.dto';
+import { RedisService } from '../../common/redis/redis.service';
+import { API_KEY_USAGE_PREFIX } from './api-key.strategy';
 
 @ApiTags('Auth')
 @ApiBearerAuth()
@@ -38,6 +40,7 @@ export class ApiKeysController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
+    private readonly redis: RedisService,
   ) {}
 
   // ----------------------------------------------------------
@@ -261,5 +264,73 @@ export class ApiKeysController {
     });
 
     return { message: 'API key revoked successfully' };
+  }
+
+  // ----------------------------------------------------------
+  // GET /auth/api-keys/:id/usage
+  // Returns daily request stats for the last 30 days and lastUsedAt.
+  // Owner-only.
+  // ----------------------------------------------------------
+  @Get(':id/usage')
+  @ApiOperation({ summary: 'Get daily request usage stats for an API key (owner-only)' })
+  @ApiParam({ name: 'id', description: 'UUID of the API key' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns 30-day daily request stats and lastUsedAt timestamp.',
+  })
+  @ApiResponse({ status: 404, description: 'API key not found.' })
+  @ApiResponse({ status: 403, description: 'You do not own this API key.' })
+  async getUsage(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+  ) {
+    const apiKey = await this.prisma.apiKey.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        userId: true,
+        name: true,
+        lastUsedAt: true,
+      },
+    });
+
+    if (!apiKey) {
+      throw new NotFoundException('API key not found');
+    }
+
+    if (apiKey.userId !== user.id) {
+      throw new ForbiddenException('You do not own this API key');
+    }
+
+    const days = 30;
+    const now = new Date();
+    const dates: string[] = [];
+    const keys: string[] = [];
+
+    // Chronological order: 29 days ago up to today
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const dateStr = d.toISOString().slice(0, 10);
+      dates.push(dateStr);
+      keys.push(`${API_KEY_USAGE_PREFIX}${id}:${dateStr}`);
+    }
+
+    const counts = await this.redis.getClient().mget(...keys);
+
+    let totalRequests = 0;
+    const dailyUsage = dates.map((date, idx) => {
+      const rawCount = counts[idx];
+      const count = rawCount ? parseInt(rawCount, 10) : 0;
+      totalRequests += count;
+      return { date, count };
+    });
+
+    return {
+      id: apiKey.id,
+      name: apiKey.name,
+      lastUsedAt: apiKey.lastUsedAt,
+      totalRequests30d: totalRequests,
+      dailyUsage,
+    };
   }
 }
