@@ -87,6 +87,7 @@ export class MilestonesService {
             rate: fxRate.rate,
             asOf: fxRate.asOf,
             estimate: true,
+            ...(fxRate.stale && { stale: true }),
           }
         : undefined;
 

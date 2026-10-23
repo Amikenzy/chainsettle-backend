@@ -7,7 +7,9 @@ import { RedisService } from '../../common/redis/redis.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { runTrackedJob } from '../../common/jobs/job-tracker.util';
 
-const REMINDER_LOCK_KEY = 'chainsettle:shipment-reminders:lock';
+import { JOB_LOCK_KEYS } from '../../common/jobs/job-locks';
+
+const REMINDER_LOCK_KEY = JOB_LOCK_KEYS['shipment-reminder'];
 const REMINDER_LOCK_TTL_MS = 4 * 60 * 1000;
 const BATCH_SIZE = 100;
 

@@ -6,7 +6,7 @@ import { TerminusModule } from '@nestjs/terminus';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { envValidationSchema } from './config/env.validation';
 import { RolesGuard } from './common/guards/roles.guard';
-import { RateLimitThrottlerGuard } from './common/guards/rate-limit-throttler.guard';
+import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
 
 import { PrismaModule } from './common/prisma/prisma.module';
 import { StellarModule } from './common/stellar/stellar.module';
@@ -105,10 +105,10 @@ import { SettlementProposalsModule } from './modules/milestones/settlement-propo
     SettlementProposalsModule,
   ],
   providers: [
-    // Apply global throttler guard (sets X-RateLimit-* on success and 429)
+    // Apply global throttler guard to REST and GraphQL (sets X-RateLimit-* on success and 429)
     {
       provide: APP_GUARD,
-      useClass: RateLimitThrottlerGuard,
+      useClass: GqlThrottlerGuard,
     },
     // Apply TimeoutGuard to read @Timeout() decorator metadata
     {

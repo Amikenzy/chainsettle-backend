@@ -5,6 +5,7 @@ import { SchedulerRegistry } from "@nestjs/schedule";
 import { UserRole } from "@prisma/client";
 import { AdminDashboardService } from "./admin-dashboard.service";
 import { AdminDashboardController } from "./admin-dashboard.controller";
+import { AdminJobsService } from "./admin-jobs.service";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { RedisService } from "../../common/redis/redis.service";
 import { TokenRegistryService } from "../../common/token-registry/token-registry.service";
@@ -60,6 +61,7 @@ describe("Admin Jobs (#533)", () => {
         { provide: TokenRegistryService, useValue: {} },
         { provide: FxRateService, useValue: {} },
         { provide: SchedulerRegistry, useValue: mockSchedulerRegistry },
+        { provide: AdminJobsService, useValue: { triggerJob: jest.fn() } },
         { provide: ConfigService, useValue: { get: jest.fn() } },
       ],
     }).compile();
